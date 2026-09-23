@@ -5,3 +5,10 @@ gpx/*
 !gpx/.gitkeep
 media/*
 !media/.gitkeep
+
+# Build output
+dist/
+
+# IDE and build output
+.idea/
+bin/

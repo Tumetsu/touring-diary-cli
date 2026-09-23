@@ -1,0 +1,8 @@
+[
+  { "timestamp": "2026-06-27T09:01:00+03:00", "text": "Start of the ride" },
+  { "timestamp": "2026-06-27T23:50:00+03:00", "text": "In the tent.\nSecond line." },
+  { "timestamp": "2026-06-28T00:30:00+03:00", "text": "After midnight", "title": "Late", "lat": 60.5, "lon": 25.5 },
+  { "timestamp": "not a time", "text": "bad" },
+  { "timestamp": "2026-06-28T08:00:00+03:00", "text": "" },
+  { "timestamp": "2026-06-28T08:10:00+02:00", "text": "Odd offset", "lat": 61.0 }
+]

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Touring diary</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23b5552f'/%3E%3Cpath d='M8 21l5-8 4 5 3-3 4 6z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="vendor/markercluster/MarkerCluster.css">
+  <link rel="stylesheet" href="vendor/markercluster/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="trip-head">
+      <h1 class="trip-title" id="trip-title">Touring diary</h1>
+      <p class="trip-summary" id="trip-summary"></p>
+    </div>
+    <nav class="day-chips" id="day-chips" aria-label="Days"></nav>
+  </header>
+  <main class="layout">
+    <aside class="timeline" id="timeline" aria-label="Timeline">
+      <button class="sheet-handle" id="sheet-handle" type="button" aria-label="Expand timeline" aria-expanded="false"><span></span></button>
+      <div class="timeline-scroll" id="timeline-scroll">
+        <p class="loading">Loading trip…</p>
+      </div>
+    </aside>
+    <div class="map" id="map" role="region" aria-label="Map"></div>
+  </main>
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+    <div class="lb-stage" id="lb-stage"></div>
+    <button class="lb-btn lb-close" id="lb-close" type="button" aria-label="Close (Esc)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <button class="lb-btn lb-nav lb-prev" id="lb-prev" type="button" aria-label="Previous (←)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <button class="lb-btn lb-nav lb-next" id="lb-next" type="button" aria-label="Next (→)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+    </button>
+    <div class="lb-bar">
+      <div class="lb-text">
+        <p class="lb-when" id="lb-when"></p>
+        <p class="lb-caption" id="lb-caption"></p>
+        <p class="lb-approx" id="lb-approx"></p>
+      </div>
+      <div class="lb-side">
+        <span class="lb-count" id="lb-count"></span>
+        <a class="lb-full" id="lb-full" target="_blank" rel="noopener">Open full size</a>
+      </div>
+      <div class="lb-mini" id="lb-mini" aria-hidden="true"></div>
+    </div>
+  </div>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="vendor/markercluster/leaflet.markercluster.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

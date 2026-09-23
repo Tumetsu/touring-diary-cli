@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="test" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+ <wpt lat="60.0100" lon="25.0100">
+  <time>2026-06-27T12:00:00Z</time>
+  <name>Viewpoint</name>
+  <desc>Nice view</desc>
+ </wpt>
+ <wpt lat="60.0200" lon="25.0200">
+  <name>Untimed waypoint</name>
+ </wpt>
+ <trk>
+  <name>Ride</name>
+  <type>cycling</type>
+  <trkseg>
+   <trkpt lat="60.0000" lon="25.0000"><ele>10</ele><time>2026-06-27T06:00:00Z</time>
+    <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>100</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+   <trkpt lat="60.0009" lon="25.0000"><ele>20</ele><time>2026-06-27T06:01:00Z</time>
+    <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>110</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+   <trkpt lat="60.0018" lon="25.0000"><ele>15</ele><time>2026-06-27T06:02:00Z</time>
+    <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>120</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+   <trkpt lat="60.0018" lon="25.0000"><ele>30</ele><time>2026-06-27T06:03:00Z</time></trkpt>
+  </trkseg>
+ </trk>
+ <trk>
+  <name>Walk</name>
+  <trkseg>
+   <trkpt lat="60.1000" lon="25.1000"><time>2026-06-27T20:00:00Z</time></trkpt>
+   <trkpt lat="60.1010" lon="25.1000"><time>2026-06-27T20:10:00Z</time></trkpt>
+  </trkseg>
+  <trkseg>
+   <trkpt lat="60.1020" lon="25.1000"></trkpt>
+   <trkpt lat="60.1030" lon="25.1000"><time>2026-06-27T20:30:00Z</time></trkpt>
+  </trkseg>
+ </trk>
+</gpx>
