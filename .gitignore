@@ -12,3 +12,4 @@ dist/
 # IDE and build output
 .idea/
 bin/
+site/
