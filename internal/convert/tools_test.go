@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
 )
 
 // fakeTool writes an executable shell script and returns its path.

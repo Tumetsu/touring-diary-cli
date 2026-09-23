@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tuomassalmi/touring-diary/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
 )
 
 // CacheFile is the cache's name inside the output dir.

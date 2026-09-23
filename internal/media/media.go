@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // Kind is the kind of a media file.

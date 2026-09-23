@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 var sourceOrder = []model.PlacementSource{

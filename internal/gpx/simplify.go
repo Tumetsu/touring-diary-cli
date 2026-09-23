@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // DisplayTolerance is the Ramer–Douglas–Peucker tolerance for display tracks.

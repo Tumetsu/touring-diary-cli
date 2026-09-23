@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tuomassalmi/touring-diary/web"
+	"github.com/Tumetsu/touring-diary-cli/web"
 )
 
 // copyWebAssets writes the embedded frontend (index.html, app.js, style.css,

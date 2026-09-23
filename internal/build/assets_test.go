@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tuomassalmi/touring-diary/web"
+	"github.com/Tumetsu/touring-diary-cli/web"
 )
 
 func TestEmbeddedAssets(t *testing.T) {

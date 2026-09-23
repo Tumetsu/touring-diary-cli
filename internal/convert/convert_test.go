@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
 )
 
 const fixtureDir = "../../testdata/media"

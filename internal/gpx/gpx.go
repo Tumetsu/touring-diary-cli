@@ -15,7 +15,7 @@ import (
 
 	gpxgo "github.com/tkrajina/gpxgo/gpx"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // Point is a full-resolution trackpoint. Time is zero when the GPX point has

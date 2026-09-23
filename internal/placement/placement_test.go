@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 var t0 = time.Date(2026, 6, 27, 6, 0, 0, 0, time.UTC)

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 func TestBuildWithMedia(t *testing.T) {

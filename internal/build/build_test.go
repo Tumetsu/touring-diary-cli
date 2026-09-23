@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 const td = "../../testdata"

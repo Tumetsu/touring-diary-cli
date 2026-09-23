@@ -27,6 +27,12 @@ The design and the rules the tool follows are in [SPEC.md](SPEC.md).
 
 ## Install
 
+With Go installed:
+
+```sh
+go install github.com/Tumetsu/touring-diary-cli/cmd/touring-diary@latest
+```
+
 From a checkout:
 
 ```sh

@@ -1,4 +1,4 @@
-module github.com/tuomassalmi/touring-diary
+module github.com/Tumetsu/touring-diary-cli
 
 go 1.27.0
 

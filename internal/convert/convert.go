@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
 )
 
 // Default output sizes (long edge, pixels).

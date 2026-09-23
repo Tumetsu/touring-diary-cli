@@ -7,12 +7,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/media"
-	"github.com/tuomassalmi/touring-diary/internal/model"
-	"github.com/tuomassalmi/touring-diary/internal/notes"
-	"github.com/tuomassalmi/touring-diary/internal/placement"
-	"github.com/tuomassalmi/touring-diary/internal/timeutil"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/notes"
+	"github.com/Tumetsu/touring-diary-cli/internal/placement"
+	"github.com/Tumetsu/touring-diary-cli/internal/timeutil"
 )
 
 // ToolOff disables ffmpeg or ffprobe when given as Options.FFmpeg/FFprobe.

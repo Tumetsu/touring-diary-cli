@@ -3,7 +3,7 @@ package gpx
 import (
 	"math"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // EarthRadiusM is the mean Earth radius used for distance calculations.

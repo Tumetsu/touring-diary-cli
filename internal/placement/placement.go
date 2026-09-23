@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/gpx"
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/gpx"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // DefaultMaxGap is the default maximum time distance to a usable anchor.

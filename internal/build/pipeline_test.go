@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/media"
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/media"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 func writeTestFile(t *testing.T, path, data string) {

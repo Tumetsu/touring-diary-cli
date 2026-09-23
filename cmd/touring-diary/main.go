@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tuomassalmi/touring-diary/internal/build"
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/placement"
-	"github.com/tuomassalmi/touring-diary/internal/serve"
+	"github.com/Tumetsu/touring-diary-cli/internal/build"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/placement"
+	"github.com/Tumetsu/touring-diary-cli/internal/serve"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

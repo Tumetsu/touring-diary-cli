@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
 )
 
 // Note is one parsed note.

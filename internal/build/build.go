@@ -18,12 +18,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tuomassalmi/touring-diary/internal/convert"
-	"github.com/tuomassalmi/touring-diary/internal/gpx"
-	"github.com/tuomassalmi/touring-diary/internal/model"
-	"github.com/tuomassalmi/touring-diary/internal/notes"
-	"github.com/tuomassalmi/touring-diary/internal/placement"
-	"github.com/tuomassalmi/touring-diary/internal/timeutil"
+	"github.com/Tumetsu/touring-diary-cli/internal/convert"
+	"github.com/Tumetsu/touring-diary-cli/internal/gpx"
+	"github.com/Tumetsu/touring-diary-cli/internal/model"
+	"github.com/Tumetsu/touring-diary-cli/internal/notes"
+	"github.com/Tumetsu/touring-diary-cli/internal/placement"
+	"github.com/Tumetsu/touring-diary-cli/internal/timeutil"
 )
 
 // DefaultTitle is used when neither the CLI nor the config gives a title.
