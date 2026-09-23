@@ -1,5 +1,8 @@
 # touring-diary
 
+> [!NOTE]
+> Fully vibe-coded tool. Use with your own judgement :)
+
 A command-line tool that turns the GPX tracks, timestamped notes and photos/videos
 from a trip into a static website: a map with the routes, and with every note and
 photo pinned where it happened, next to a timeline for going through the trip day
