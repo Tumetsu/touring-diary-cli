@@ -4,11 +4,18 @@
   --surface-2: #faf8f4;
   --ink: #23262b;
   --ink-2: #4b5058;
-  --muted: #80858d;
+  --muted: #767b83; /* 4.3:1 on white, 3.9:1 on --head-bg */
   --line: #e4e0d8;
   --accent: #b5552f;
   --accent-soft: #f6e6dc;
+  --accent-ink: #9a4424; /* accent as small text: 5.9:1 on --head-bg */
   --focus: #2f5f8f;
+  --line-strong: #d6d0c5;
+  --rail: #e2ddd3;
+  --head-bg: #f8f5ef; /* sticky day header */
+  --sel-bg: #f9e8dd; /* selected timeline row */
+  --approx-ink: #7d6320;
+  --approx-line: #cdb57a;
 
   --track-cycling: #c4513a;
   --track-hiking: #6a4c93;
@@ -110,20 +117,21 @@ button { font: inherit; color: inherit; }
   justify-content: center;
   min-width: 56px;
   padding: 3px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-2);
+  color: var(--ink-2);
   cursor: pointer;
-  line-height: 1.2;
+  line-height: 1.25;
   position: relative;
 }
-.chip:hover { border-color: #cfc8bb; background: var(--surface-2); }
+.chip:hover { border-color: var(--line-strong); }
 .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.chip-label { font-size: 12.5px; font-weight: 600; }
+.chip-label { font-size: 12px; font-weight: 550; }
 .chip-date { font-size: 11px; color: var(--muted); }
 .chip-all { justify-content: center; }
-.chip.is-selected { background: var(--ink); border-color: var(--ink); color: #fff; }
-.chip.is-selected .chip-date { color: rgba(255, 255, 255, .7); }
+.chip.is-selected { background: var(--accent-soft); border-color: #e6c6b3; color: var(--ink); }
+.chip.is-selected .chip-label { font-weight: 650; }
 .chip.is-current::after {
   content: "";
   position: absolute;
@@ -169,89 +177,201 @@ button { font: inherit; color: inherit; }
 .loading, .error { padding: 24px; color: var(--muted); }
 .error { color: var(--accent); }
 
-/* ---------- Timeline ---------- */
+/* ---------- Timeline ----------
+   Type scale 11 / 12 / 13 / 15 / 18 / 28 px. Each day is a section with a
+   sticky header; its rows share three columns: a gutter (time, km along the
+   route), a rail with one marker per row, and the body. */
 
-.day { border-bottom: 1px solid var(--line); }
+.timeline {
+  --tl-pad: 12px; /* left edge of the gutter */
+  --tl-pad-r: 16px;
+  --time-w: 44px;
+  --rail-w: 20px;
+  --body-gap: 8px;
+  --rail-x: calc(var(--tl-pad) + var(--time-w) + var(--rail-w) / 2);
+  --head-h: 132px; /* the sticky header, measured per day by app.js */
+}
 
 .day-head {
   position: sticky;
   top: 0;
-  z-index: 2;
-  padding: 14px 20px 12px;
-  background: rgba(255, 255, 255, .96);
-  backdrop-filter: blur(6px);
+  z-index: 3;
+  padding: 12px var(--tl-pad-r) 10px 16px;
+  background: var(--head-bg);
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
+.day:first-child .day-head { border-top-color: transparent; }
+.day-head:hover .day-title { color: var(--accent-ink); }
 .day-kicker {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
-.day-title {
-  margin: 2px 0 0;
-  font-size: 16px;
-  font-weight: 650;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-}
-.day-stats {
-  margin: 4px 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  font-size: 13px;
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-.day-stats .none { color: var(--muted); }
-.day-stats .media-count { color: var(--muted); }
-
-.hour { padding: 4px 0 6px; }
-.hour-label {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0;
-  padding: 10px 20px 2px 19px;
-  font: 600 11px/1 var(--font-num);
-  color: var(--muted);
 }
-.hour-label::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
-.entry {
-  display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 0 10px;
-  width: 100%;
-  margin: 0;
-  padding: 8px 20px 8px 16px;
-  border: 0;
-  border-left: 3px solid transparent;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-}
-.entry:hover { background: var(--surface-2); }
-.entry:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.entry.is-selected { background: var(--note-soft); border-left-color: var(--note); }
-
-/* Lighter than the hour label above it, so the hour reads as the anchor. */
-.entry-time {
-  font: 400 11.5px/1.8 var(--font-num);
-  color: #a9adb3;
+.day-num {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
-.entry-body { min-width: 0; }
-.entry-title { display: block; margin: 0 0 2px; font-weight: 650; }
+.day-date {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.day-weekday {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.day-md { font-size: 12px; color: var(--ink-2); }
+.day-title {
+  margin: 6px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.day-stats {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.day-stats > span { white-space: nowrap; }
+.day-stats > span + span::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 10px;
+  margin: 0 8px;
+  background: var(--line-strong);
+  vertical-align: -1px;
+}
+
+.day-body { padding: 10px 0 24px; }
+
+/* A row. Buttons (notes, track events) and the media row's div alike. */
+.entry {
+  --row-bg: var(--surface);
+  --tc: var(--track-other);
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--time-w) var(--rail-w) minmax(0, 1fr);
+  align-items: start;
+  width: 100%;
+  margin: 0;
+  padding: 7px var(--tl-pad-r) 7px var(--tl-pad);
+  border: 0;
+  background: none;
+  text-align: left;
+  scroll-margin-top: calc(var(--head-h) + 8px);
+  scroll-margin-bottom: 12px;
+}
+button.entry { cursor: pointer; }
+button.entry:hover { --row-bg: var(--surface-2); background: var(--row-bg); }
+.entry:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.entry.after-gap { padding-top: 21px; }
+
+/* The rail: drawn per row so rows can colour it; rows are contiguous. */
+.entry::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--rail-x) - 1px);
+  width: 2px;
+  background: var(--rail);
+}
+.entry.on-cycling { --tc: var(--track-cycling); --tc-wash: var(--track-cycling-wash); }
+.entry.on-hiking { --tc: var(--track-hiking); --tc-wash: var(--track-hiking-wash); }
+.entry.on-other { --tc: var(--track-other); --tc-wash: var(--track-other-wash); }
+.entry.on-track { --tc-rail: color-mix(in srgb, var(--tc) 60%, var(--surface)); }
+.entry.on-track::before { background: var(--tc-rail); }
+/* Start and end rows: coloured only below / above the marker. --mark-y is
+   the marker centre from the row top. */
+.entry { --mark-y: 18px; }
+.entry.after-gap { --mark-y: 32px; }
+.entry.rail-start::before { background: linear-gradient(var(--rail) var(--mark-y), var(--tc-rail) var(--mark-y)); }
+.entry.rail-end::before { background: linear-gradient(var(--tc-rail) var(--mark-y), var(--rail) var(--mark-y)); }
+
+.gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.entry-time {
+  font: 500 12px/22px var(--font-num);
+  color: var(--muted);
+}
+.entry-km {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--muted);
+}
+
+/* Rail markers. The ring in the row's background colour breaks the rail. */
+.mark {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  box-shadow: 0 0 0 3px var(--row-bg);
+}
+.mark-note, .mark-plain {
+  width: 9px;
+  height: 9px;
+  margin-top: 6.5px;
+  border-radius: 50%;
+  background: var(--note);
+}
+.mark-plain { background: var(--muted); }
+.mark-start, .mark-end {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--tc);
+}
+.mark-start.cycling, .mark-end.cycling { --tc: var(--track-cycling); }
+.mark-start.hiking, .mark-end.hiking { --tc: var(--track-hiking); }
+.mark-end { background: var(--row-bg); border: 2.5px solid var(--tc); }
+.mark-media {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--row-bg);
+  box-shadow: none;
+}
+.mark-media svg { width: 13px; height: 13px; display: block; }
+.entry-body {
+  min-width: 0;
+  padding-left: var(--body-gap);
+}
+.entry-title {
+  display: block;
+  max-width: 32em;
+  margin: 0 0 2px;
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 650;
+  color: var(--ink);
+}
 .entry-text {
   display: block;
   margin: 0;
@@ -259,48 +379,69 @@ button { font: inherit; color: inherit; }
   overflow-wrap: anywhere;
   color: var(--ink);
 }
+.entry-note .entry-text {
+  max-width: 32em; /* about 60 characters */
+  font-size: 15px;
+  line-height: 1.5;
+}
 .entry-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 5px;
 }
 .badge {
   display: inline-block;
   padding: 0 7px;
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-2);
+  background: transparent;
+}
+.badge-approx { border-style: dashed; border-color: var(--approx-line); color: var(--approx-ink); }
+.badge-none { color: var(--muted); }
+
+/* Ride / hike start and end: a compact chip, lighter than a note. */
+.track-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  max-width: 100%;
+  padding: 2px 10px 2px 8px;
+  border-left: 3px solid var(--tc);
+  border-radius: 0 6px 6px 0;
+  background: var(--tc-wash, var(--track-other-wash));
+  font-size: 13px;
   line-height: 18px;
   color: var(--ink-2);
-  background: #efece6;
 }
-.badge-approx { background: #fbf1dc; color: #7a5a14; }
-.badge-none { background: #eeeeee; color: var(--muted); }
+.track-chip.cycling { --tc: var(--track-cycling); --tc-wash: var(--track-cycling-wash); }
+.track-chip.hiking { --tc: var(--track-hiking); --tc-wash: var(--track-hiking-wash); }
+.track-label { font-weight: 600; color: var(--ink); }
+.track-name { overflow-wrap: anywhere; }
+.track-stats { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
-.entry-track { padding-top: 5px; padding-bottom: 5px; }
-.entry-track .entry-text {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink-2);
+/* Selected row: accent bar at the row edge, tinted background, accent
+   marker. A media row is selected when one of its tiles is. */
+.entry.is-selected,
+.entry-media:has(.tile.is-selected) {
+  --row-bg: var(--sel-bg);
+  background: var(--row-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
-.track-swatch {
-  flex: none;
-  width: 18px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--track-other);
-}
-.track-swatch.cycling { background: var(--track-cycling); }
-.track-swatch.hiking { background: var(--track-hiking); }
+.entry.is-selected .mark-note,
+.entry.is-selected .mark-plain { background: var(--accent); transform: scale(1.25); }
+.entry-media:has(.tile.is-selected) .mark-media { color: var(--accent); }
 
 /* Media grid: consecutive photos/videos within an hour. */
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 4px;
-  padding: 6px 20px 6px 19px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding-left: var(--body-gap);
 }
 .tile {
   position: relative;
@@ -312,6 +453,8 @@ button { font: inherit; color: inherit; }
   overflow: hidden;
   background: #e9e5de;
   cursor: pointer;
+  scroll-margin-top: calc(var(--head-h) + 8px);
+  scroll-margin-bottom: 12px;
 }
 .tile img {
   display: block;
@@ -322,7 +465,7 @@ button { font: inherit; color: inherit; }
 }
 .tile:hover img { transform: scale(1.04); }
 .tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.tile.is-selected { box-shadow: 0 0 0 3px var(--accent); }
+.tile.is-selected { box-shadow: 0 0 0 2px var(--sel-bg), 0 0 0 4px var(--accent); }
 .tile-missing {
   display: grid;
   place-items: center;
@@ -354,7 +497,7 @@ button { font: inherit; color: inherit; }
   right: 4px; top: 4px;
   padding: 1px 5px;
   border-radius: 4px;
-  font: 600 10.5px/1.4 var(--font-num);
+  font: 600 11px/1.4 var(--font-num);
   color: #fff;
   background: rgba(0, 0, 0, .55);
 }
@@ -367,7 +510,7 @@ button { font: inherit; color: inherit; }
   border-radius: 50%;
   font-size: 11px;
   line-height: 1;
-  color: #7a5a14;
+  color: var(--approx-ink);
   background: #fbf1dc;
   border: 1px dashed #b8902f;
 }
@@ -390,7 +533,7 @@ button { font: inherit; color: inherit; }
   border-color: transparent transparent transparent #fff;
 }
 
-.empty-day { margin: 0; padding: 12px 20px; color: var(--muted); font-size: 13px; }
+.empty-day { margin: 0; padding: 4px var(--tl-pad-r) 4px calc(var(--rail-x) + var(--rail-w) / 2 + var(--body-gap)); color: var(--muted); font-size: 13px; }
 
 /* ---------- Map markers ---------- */
 
@@ -903,6 +1046,9 @@ video.lb-media { background-color: #000; }
 
 /* Timeline rows after the scrubber's moment. */
 .entry.is-future, .tile.is-future { opacity: .35; }
+/* A media row whose tiles are all ahead dims its gutter and marker too. */
+.entry-media:not(:has(.tile:not(.is-future))) > .gutter,
+.entry-media:not(:has(.tile:not(.is-future))) > .mark { opacity: .35; }
 .tile.is-future img { filter: grayscale(.6); }
 
 .profile-svg .p-now .p-ahead { fill: var(--surface); opacity: .55; pointer-events: none; }
@@ -984,10 +1130,11 @@ video.lb-media { background-color: #000; }
     border-radius: 2px;
     background: #cfc9bf;
   }
-  .day-head { padding: 10px 16px; }
-  .entry { padding-left: 12px; padding-right: 16px; }
-  .hour-label { padding-left: 16px; }
-  .media-grid { padding-left: 12px; padding-right: 16px; }
+  .timeline { --tl-pad: 8px; --tl-pad-r: 12px; --head-h: 112px; }
+  .day-head { padding: 8px 12px 8px 12px; }
+  .day-num { font-size: 28px; }
+  .day-title { margin-top: 4px; font-size: 15px; }
+  .day-stats { margin-top: 3px; }
 
   .lb-stage { margin: 56px 0 4px; }
   .lb-nav { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: none; margin: 0; }
@@ -1021,11 +1168,11 @@ video.lb-media { background-color: #000; }
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font: 500 10.5px/1 var(--font-num);
+  font: 500 11px/1 var(--font-num);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .chip-cam svg { width: 10px; height: 10px; display: block; }
-.chip.is-selected .chip-count { color: rgba(255, 255, 255, .7); }
+
 
 .lightbox { overscroll-behavior: contain; }

@@ -74,6 +74,8 @@ function makeFormatters(timezone) {
     hour: { hour: '2-digit', hourCycle: 'h23' },
     date: { weekday: 'short', day: 'numeric', month: 'short' },
     longDate: { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' },
+    weekday: { weekday: 'long' },
+    dayMonthYear: { day: 'numeric', month: 'long', year: 'numeric' },
   };
   let tz = timezone || 'UTC';
   let shiftMs = 0;
@@ -103,6 +105,8 @@ function makeFormatters(timezone) {
     date: make(opts.date), // an instant's local date, "Sat 27 Jun"
     dayShort: dateOnly(opts.date),
     dayLong: dateOnly(opts.longDate),
+    weekday: dateOnly(opts.weekday),
+    dayMonthYear: dateOnly(opts.dayMonthYear),
     mode: shiftMs ? 'offset-fallback' : 'intl',
   };
 }
@@ -495,19 +499,42 @@ function applyDayDimming() {
 
 // renderItem returns the timeline row for one item. New kinds (photo,
 // video) get their own case; unknown kinds fall back to a plain row.
-function renderItem(item) {
+function renderItem(item, ctx) {
   switch (item.kind) {
     case 'note':
-      return renderNote(item);
+      return renderNote(item, ctx);
     case 'photo':
     case 'video':
       return renderTile(item);
     default:
-      return renderPlain(item);
+      return renderPlain(item, ctx);
   }
 }
 
-function entryShell(item, extraClass, body) {
+// Every timeline row has the same three columns: a gutter with the time and,
+// inside a track's time range, the distance along the day's route; a marker
+// on the rail; and the body. ctx carries the route placement (see
+// placeEvent): { km, cat, edge }.
+function gutter(time, ctx) {
+  return h('span', { class: 'gutter' },
+    h('span', { class: 'entry-time' }, state.fmt.time(time)),
+    ctx?.km != null ? h('span', { class: 'entry-km' }, formatKm(ctx.km)) : null);
+}
+
+function railMark(kind, cat) {
+  const m = h('span', { class: `mark mark-${kind}${cat ? ` ${cat}` : ''}`, 'aria-hidden': 'true' });
+  if (kind === 'media') m.innerHTML = CAMERA_SVG;
+  return m;
+}
+
+// railClass marks rows inside a track's time range, so the rail is drawn in
+// the activity colour there (from the start marker down to the end marker).
+function railClass(ctx) {
+  if (!ctx?.cat) return '';
+  return ` on-track on-${ctx.cat}${ctx.edge ? ` rail-${ctx.edge}` : ''}`;
+}
+
+function entryShell(item, extraClass, body, ctx, markKind = 'note') {
   const approx = approxText(item);
   const meta = [];
   if (approx) meta.push(h('span', { class: 'badge badge-approx', title: approx }, 'Approximate position'));
@@ -515,33 +542,24 @@ function entryShell(item, extraClass, body) {
   if (item.timeAssumed) meta.push(h('span', { class: 'badge', title: 'The source had no UTC offset; trip timezone assumed' }, 'Time assumed'));
   return h('button', {
     type: 'button',
-    class: `entry ${extraClass}`,
+    class: `entry ${extraClass}${railClass(ctx)}`,
     id: `entry-${item.id}`,
     dataset: { id: item.id },
     onclick: () => selectItem(item.id, { source: 'timeline' }),
   },
-  entryTime(item.time),
+  gutter(item.time, ctx),
+  railMark(markKind),
   h('span', { class: 'entry-body' },
     body,
     meta.length ? h('span', { class: 'entry-meta' }, meta) : null,
   ));
 }
 
-// entryTime is the time column of a timeline row. A time exactly on the hour
-// repeats the hour label above it, so it is left blank (screen readers
-// still get it).
-function entryTime(time) {
-  const t = state.fmt.time(time);
-  return t.endsWith(':00')
-    ? h('span', { class: 'entry-time is-on-hour' }, h('span', { class: 'sr-only' }, t))
-    : h('span', { class: 'entry-time' }, t);
-}
-
-function renderNote(item) {
+function renderNote(item, ctx) {
   return entryShell(item, 'entry-note', [
-    item.title ? h('span', { class: 'entry-title'}, item.title) : null,
-    item.text ? h('span', { class: 'entry-text'}, item.text) : null,
-  ]);
+    item.title ? h('span', { class: 'entry-title' }, item.title) : null,
+    item.text ? h('span', { class: 'entry-text' }, item.text) : null,
+  ], ctx);
 }
 
 // renderTile is one square thumbnail in a media grid row.
@@ -572,27 +590,42 @@ function renderTile(item) {
   h('span', { class: 'tile-time' }, state.fmt.time(item.time)));
 }
 
-function renderPlain(item) {
-  const label = item.title || item.text || item.original || item.kind;
-  return entryShell(item, `entry-${item.kind}`, h('span', { class: 'entry-text'}, label));
+// mediaRow is one timeline row holding a grid of consecutive photos and
+// videos; its gutter shows the first one's time and distance.
+function mediaRow(first, ctx) {
+  const grid = h('div', { class: 'media-grid' });
+  const row = h('div', { class: `entry entry-media${railClass(ctx)}` },
+    gutter(first.time, ctx),
+    railMark('media'),
+    grid);
+  return { row, grid };
 }
 
-function renderTrackEvent(ev) {
+function renderPlain(item, ctx) {
+  const label = item.title || item.text || item.original || item.kind;
+  return entryShell(item, `entry-${item.kind}`, h('span', { class: 'entry-text' }, label), ctx, 'plain');
+}
+
+function renderTrackEvent(ev, ctx) {
   const t = ev.track;
   const verb = trackVerb(t.type);
-  const text = ev.kind === 'start'
-    ? `${verb} started · ${t.name}`
-    : [`${verb} ended`, formatKm(t.stats.distanceKm), `↑ ${Math.round(t.stats.elevationGainM)} m`,
-      t.stats.movingTimeS ? formatDuration(t.stats.movingTimeS) : null].filter(Boolean).join(' · ');
+  const cat = trackCategory(t.type);
+  const start = ev.kind === 'start';
+  const stats = start ? [] : [formatKm(t.stats.distanceKm), `↑ ${Math.round(t.stats.elevationGainM)} m`,
+    t.stats.movingTimeS ? formatDuration(t.stats.movingTimeS) : null].filter(Boolean);
   return h('button', {
     type: 'button',
-    class: 'entry entry-track',
+    class: `entry entry-track${railClass(ctx)}`,
     dataset: { track: t.id },
     onclick: () => focusTrack(t.id),
   },
-  entryTime(ev.time),
+  gutter(ev.time, ctx),
+  railMark(start ? 'start' : 'end', cat),
   h('span', { class: 'entry-body' },
-    h('span', { class: 'entry-text' }, h('span', { class: `track-swatch ${trackCategory(t.type)}` }), text)));
+    h('span', { class: `track-chip ${cat}` },
+      h('span', { class: 'track-label' }, `${verb} ${start ? 'started' : 'ended'}`),
+      start ? h('span', { class: 'track-name' }, t.name || 'Untitled track') : null,
+      stats.length ? h('span', { class: 'track-stats' }, stats.join(' · ')) : null)));
 }
 
 function mediaCounts(ids) {
@@ -612,16 +645,39 @@ function mediaCountText({ photos, videos }) {
 
 function dayStatsLine(day) {
   const s = day.stats;
-  const media = mediaCountText(mediaCounts(day.itemIds));
-  const mediaEl = media ? h('span', { class: 'media-count' }, media) : null;
-  if (!s.trackIds.length) return h('p', { class: 'day-stats' }, h('span', { class: 'none' }, 'No tracks recorded'), mediaEl);
-  return h('p', { class: 'day-stats' },
-    h('span', {}, formatKm(s.distanceKm)),
-    h('span', {}, `↑ ${Math.round(s.elevationGainM)} m`),
-    h('span', {}, formatDuration(s.movingTimeS)),
-    mediaEl,
-  );
+  const { photos, videos } = mediaCounts(day.itemIds);
+  const parts = s.trackIds.length
+    ? [h('span', {}, formatKm(s.distanceKm)),
+      h('span', {}, `↑ ${Math.round(s.elevationGainM).toLocaleString('en-GB')} m`),
+      h('span', {}, formatDuration(s.movingTimeS))]
+    : [h('span', { class: 'none' }, 'No tracks recorded')];
+  if (photos) parts.push(h('span', {}, plural(photos, 'photo')));
+  if (videos) parts.push(h('span', {}, plural(videos, 'video')));
+  return h('p', { class: 'day-stats' }, parts);
 }
+
+function renderDayHead(day) {
+  return h('header', { class: 'day-head', onclick: () => selectDay(day.index, { source: 'timeline' }) },
+    h('p', { class: 'day-kicker' },
+      h('span', { class: 'sr-only' }, 'Day '),
+      h('span', { class: 'day-num' }, day.index),
+      h('span', { class: 'day-date' },
+        h('span', { class: 'day-weekday' }, state.fmt.weekday(day.date)),
+        h('span', { class: 'day-md' }, state.fmt.dayMonthYear(day.date)))),
+    day.title ? h('h2', { class: 'day-title' }, day.title) : null,
+    dayStatsLine(day));
+}
+
+// placeEvent places a row's moment on the day's route: km along it and the
+// activity of the track it falls in; nothing outside every track.
+function placeEvent(segs, time, edge) {
+  const best = placeOnRoute(segs, Date.parse(time));
+  if (!best) return null;
+  return { km: best.km, cat: best.seg.cat, edge: null, ...edge };
+}
+
+// Rows more than this far apart in time get extra space between them.
+const GAP_MS = 90 * 60000;
 
 // timelineEntries: every timeline row with its time, chronological; the
 // scrubber dims the ones after the chosen moment.
@@ -631,55 +687,81 @@ function renderTimeline(trip) {
   timelineEntries.length = 0;
   const frag = document.createDocumentFragment();
   for (const day of trip.days) {
+    const { segs } = routeSegs(day.stats.trackIds);
+    const segOf = new Map(segs.map((sg) => [sg.track.id, sg]));
     const events = day.itemIds.map((id) => {
       const item = state.itemsById.get(id);
-      return { time: item.time, node: () => renderItem(item), media: isMedia(item) };
+      return { time: item.time, item, media: isMedia(item), ctx: placeEvent(segs, item.time) };
     });
     for (const tid of day.stats.trackIds) {
       const track = state.tracksById.get(tid);
       if (!track?.start) continue;
-      events.push({ time: track.start, node: () => renderTrackEvent({ kind: 'start', track, time: track.start }), order: -1 });
-      events.push({ time: track.end, node: () => renderTrackEvent({ kind: 'end', track, time: track.end }), order: 1 });
+      const sg = segOf.get(tid);
+      const cat = trackCategory(track.type);
+      events.push({ time: track.start, track, kind: 'start', order: -1, ctx: sg ? { km: sg.offset, cat, edge: 'start' } : null });
+      events.push({ time: track.end, track, kind: 'end', order: 1, ctx: sg ? { km: sg.offset + sg.km, cat, edge: 'end' } : null });
     }
     events.sort((a, b) => (Date.parse(a.time) - Date.parse(b.time)) || ((a.order || 0) - (b.order || 0)));
 
+    const body = h('div', { class: 'day-body' });
     const section = h('section', { class: 'day', id: `day-${day.index}`, dataset: { day: day.index } },
-      h('header', { class: 'day-head', onclick: () => selectDay(day.index, { source: 'timeline' }) },
-        h('p', { class: 'day-kicker' }, `Day ${day.index} · ${state.fmt.dayLong(day.date)}`),
-        day.title ? h('h2', { class: 'day-title' }, day.title) : null,
-        dayStatsLine(day),
-      ));
+      renderDayHead(day), body);
 
     // Consecutive photos and videos within an hour share one grid row.
     let hourKey = null;
-    let hourEl = null;
-    let gridEl = null;
+    let grid = null;
+    let lastT = null;
     for (const ev of events) {
+      const t = Date.parse(ev.time);
       const hk = state.fmt.hour(ev.time);
       if (hk !== hourKey) {
         hourKey = hk;
-        hourEl = h('div', { class: 'hour' }, h('p', { class: 'hour-label' }, `${hk}:00`));
-        section.append(hourEl);
-        gridEl = null;
+        grid = null;
       }
-      const node = ev.node();
-      timelineEntries.push({ t: Date.parse(ev.time), el: node });
-      if (ev.media) {
-        if (!gridEl) {
-          gridEl = h('div', { class: 'media-grid' });
-          hourEl.append(gridEl);
+      let row = null;
+      let node;
+      if (ev.track) {
+        node = row = renderTrackEvent(ev, ev.ctx);
+        grid = null;
+      } else if (ev.media) {
+        node = renderTile(ev.item);
+        if (!grid) {
+          const r = mediaRow(ev.item, ev.ctx);
+          row = r.row;
+          grid = r.grid;
         }
-        gridEl.append(node);
+        grid.append(node);
       } else {
-        gridEl = null;
-        hourEl.append(node);
+        node = row = renderItem(ev.item, ev.ctx);
+        grid = null;
       }
+      if (row) {
+        if (lastT != null && t - lastT >= GAP_MS) row.classList.add('after-gap');
+        body.append(row);
+      }
+      lastT = t;
+      timelineEntries.push({ t, el: node });
     }
-    if (!events.length) section.append(h('p', { class: 'empty-day' }, 'Nothing recorded.'));
+    if (!events.length) body.append(h('p', { class: 'empty-day' }, 'Nothing recorded.'));
     frag.append(section);
   }
   els.scroll.replaceChildren(frag);
   timelineEntries.sort((a, b) => a.t - b.t);
+  trackDayHeadHeights();
+}
+
+// Rows scroll into view below the sticky day header (scroll-margin-top in
+// the CSS); its height depends on how the title wraps, so it is measured.
+let headObserver = null;
+function trackDayHeadHeights() {
+  headObserver?.disconnect();
+  if (typeof ResizeObserver === 'undefined') return;
+  headObserver = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      e.target.parentElement.style.setProperty('--head-h', `${Math.ceil(e.target.offsetHeight)}px`);
+    }
+  });
+  for (const head of els.scroll.querySelectorAll('.day-head')) headObserver.observe(head);
 }
 
 const CAMERA_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5.6 2.5h4.8l1 1.6H14a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5.1a1 1 0 0 1 1-1h2.6zM8 5.8a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 1.4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z"/></svg>';
@@ -1223,50 +1305,74 @@ function nearestIndex(n, get, v) {
   return v - get(i - 1) <= get(i) - v ? i - 1 : i;
 }
 
-// buildProfileView lays out the tracks of the selected day (or the whole
-// trip) end to end in chronological order and places the items on them.
-function buildProfileView() {
-  const day = state.selectedDay ? state.dayByIndex.get(state.selectedDay) : null;
-  const ids = day ? day.stats.trackIds : state.trip.tracks.map((t) => t.id);
+// trackCum returns the cumulative km per point of a track, computed once.
+function trackCum(track) {
+  let cum = profile.cum.get(track.id);
+  if (!cum) {
+    cum = cumulativeKm(track);
+    profile.cum.set(track.id, cum);
+  }
+  return cum;
+}
+
+// routeSegs lays out the given tracks end to end in chronological order:
+// each segment carries its km offset along the combined route.
+function routeSegs(ids) {
   const tracks = ids.map((id) => state.tracksById.get(id))
     .filter((t) => t && t.start && t.points?.length > 1)
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const segs = [];
   let offset = 0;
+  for (const track of tracks) {
+    const cum = trackCum(track);
+    const km = cum[cum.length - 1];
+    segs.push({ track, cum, offset, km, t0: Date.parse(track.start), t1: Date.parse(track.end), cat: trackCategory(track.type) });
+    offset += km;
+  }
+  return { segs, totalKm: offset };
+}
+
+// placeOnRoute finds the track point nearest in time to t (ms) among the
+// segments whose time range contains t. When ranges overlap (a hike during
+// a paused ride), the closer point wins. Null outside every track.
+function placeOnRoute(segs, t) {
+  let best = null;
+  for (const seg of segs) {
+    if (t < seg.t0 || t > seg.t1) continue;
+    const pts = seg.track.points;
+    const s = (t - seg.t0) / 1000;
+    const idx = nearestIndex(pts.length, (i) => pts[i][3], s);
+    const dt = Math.abs(pts[idx][3] - s);
+    if (!best || dt < best.dt) best = { seg, idx, dt, km: seg.offset + seg.cum[idx] };
+  }
+  return best;
+}
+
+// buildProfileView lays out the tracks of the selected day (or the whole
+// trip) end to end in chronological order and places the items on them.
+function buildProfileView() {
+  const day = state.selectedDay ? state.dayByIndex.get(state.selectedDay) : null;
+  const ids = day ? day.stats.trackIds : state.trip.tracks.map((t) => t.id);
+  const { segs, totalKm } = routeSegs(ids);
   let lo = Infinity;
   let hi = -Infinity;
-  for (const track of tracks) {
-    const cum = profile.cum.get(track.id);
-    const km = cum[cum.length - 1];
+  for (const { track } of segs) {
     for (const p of track.points) {
       if (p[2] == null) continue;
       if (p[2] < lo) lo = p[2];
       if (p[2] > hi) hi = p[2];
     }
-    segs.push({ track, cum, offset, km, t0: Date.parse(track.start), t1: Date.parse(track.end), cat: trackCategory(track.type) });
-    offset += km;
   }
 
-  // Items within a track's time range sit at the point nearest in time. When
-  // ranges overlap (a hike during a paused ride), the closer point wins.
   const items = [];
   const itemIds = day ? day.itemIds : state.trip.items.map((it) => it.id);
   for (const id of itemIds) {
     const item = state.itemsById.get(id);
-    const t = Date.parse(item.time);
-    let best = null;
-    for (const seg of segs) {
-      if (t < seg.t0 || t > seg.t1) continue;
-      const pts = seg.track.points;
-      const s = (t - seg.t0) / 1000;
-      const idx = nearestIndex(pts.length, (i) => pts[i][3], s);
-      const dt = Math.abs(pts[idx][3] - s);
-      if (!best || dt < best.dt) best = { item, seg, idx, dt, km: seg.offset + seg.cum[idx] };
-    }
-    if (best) items.push(best);
+    const best = placeOnRoute(segs, Date.parse(item.time));
+    if (best) items.push({ item, ...best });
   }
   items.sort((a, b) => a.km - b.km);
-  return { day, segs, totalKm: offset, lo, hi, items };
+  return { day, segs, totalKm, lo, hi, items };
 }
 
 // niceScale rounds [lo, hi] out to steps of 1, 2, 2.5 or 5 x 10^n giving
@@ -1613,7 +1719,7 @@ function setProfileCollapsed(collapsed) {
 }
 
 function initProfile(trip) {
-  for (const t of trip.tracks) if (t.points?.length) profile.cum.set(t.id, cumulativeKm(t));
+  for (const t of trip.tracks) if (t.points?.length) trackCum(t);
 
   els.profileToggle.addEventListener('click', () => {
     const collapsed = !els.profile.classList.contains('is-collapsed');
@@ -1871,7 +1977,8 @@ function applyTimelineCut() {
 function keepInTimelineView(el) {
   const sr = els.scroll.getBoundingClientRect();
   const r = el.getBoundingClientRect();
-  if (r.top >= sr.top + 80 && r.bottom <= sr.bottom - 16) return;
+  const head = el.closest('.day')?.querySelector('.day-head')?.offsetHeight ?? 80;
+  if (r.top >= sr.top + head + 8 && r.bottom <= sr.bottom - 16) return;
   els.scroll.scrollTo({ top: els.scroll.scrollTop + r.top - sr.top - sr.height / 2, behavior: 'smooth' });
 }
 

@@ -321,10 +321,16 @@ chips.
 
 ### 6.2 Timeline
 
-- Day sections in order, each with date, title, stats line. Inside a day, items are
-  grouped by hour (`10:00`, `11:00`, ...) and listed chronologically: note text
-  (full), photo thumbnails in a row, video posters, and small "ride started / ride
-  ended" rows from the tracks.
+- Day sections in order, each with a sticky header: day numeral, weekday and date,
+  title (track names) and a stats line (km, climb, moving time, photo and video
+  counts). Inside a day, entries sit on a vertical rail: the gutter shows each
+  entry's time and, for entries inside a track's time span, the distance along the
+  day's route in km; the rail carries a marker per entry (dot for notes, filled or
+  hollow activity-coloured square for track start and end, camera glyph for photo
+  groups) and is tinted in the activity colour while a track is in progress. Entries
+  are note text (full), photo thumbnails in a 3-column grid (consecutive photos
+  within the same hour share one grid), video posters, and compact "ride started /
+  ride ended" chips from the tracks.
 - Clicking any entry selects it: the map focuses it, and photos/videos open in a
   lightbox. The lightbox has prev/next in chronological order across the whole trip
   and shows the time, day, and approximation note.
