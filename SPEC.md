@@ -335,8 +335,6 @@ chips.
 
 ### 6.3 Later (not v1)
 
-- Time scrubber that moves a "you are here" dot along the tracks and hides items
-  after the chosen moment.
 - Live Photo playback on press.
 - Elevation profile on narrow screens (the bottom sheet occupies that space).
 
@@ -356,6 +354,41 @@ chips.
 - Photos, videos and notes whose time falls within a track's time range are
   ticks under the plot, at the point nearest in time. Hovering a tick shows the
   item; clicking selects it (media open in the lightbox).
+
+### 6.5 Time scrubber
+
+- A thin row directly above the elevation profile on desktop (it stays when the
+  profile is collapsed), and on narrow screens on the map just above the bottom
+  sheet: play/pause, a native range slider, the current moment as local date
+  and time in the trip zone, a speed menu (½×, 1×, 2×, 4×), a "follow" toggle
+  and a "×" reset. The slider spans the selected day (from its first to its last
+  track or item time) or, for "All", the whole trip. `←`/`→` on the slider step
+  5 min, with `Shift` 1 h.
+- It starts inactive: slider at the end, everything shown, readout "now". Any
+  interaction activates it; "×" returns to inactive.
+- Active, a "you are here" marker (accent dot in a white ring with a halo,
+  larger than the profile hover dot, in the same pane) sits at the moment's
+  position: inside a track, interpolated linearly between the neighbouring
+  points (binary search on seconds; the latest-started track wins when two
+  overlap); between tracks, at the end of the track that ended last; before the
+  range's first track, at its start. The map does not pan while dragging;
+  with "follow" on, it pans to keep the marker in view during playback and
+  after a drag or key step.
+- Tracks are drawn in their normal style up to the moment and faint and dashed
+  after it (the track in progress is split at the interpolated point). Map
+  markers of items after the moment are removed from their layers in batches
+  (at most every 50 ms while dragging). Timeline rows after the moment are
+  dimmed, not removed; during playback only, the timeline scrolls to keep the
+  last row up to the moment in view. The profile shows an accent cursor at the
+  moment and washes out the part after it.
+- Play advances 1 trip hour per 2 s at 1×; a gap between tracks takes at most
+  1 s, so nights do not stall. It stops at the end of the range (a day stays
+  within the day); from the end or inactive it starts at the range start. The
+  loop runs on `requestAnimationFrame` and stops while the tab is hidden.
+- URL hash: `t=<ISO UTC>` joins `day=`/`item=` (`#day=3&t=2026-06-28T12:00:00Z`),
+  read on load and written at most every 250 ms. Selecting an item does not
+  change the moment. Changing the day changes the range; an active scrubber
+  stays active, clamped into it.
 
 ## 7. Technology choices
 

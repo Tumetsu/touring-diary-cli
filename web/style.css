@@ -778,6 +778,137 @@ video.lb-media { background-color: #000; }
   font-size: 13px;
 }
 
+/* ---------- Time scrubber ---------- */
+
+.scrubber {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  min-width: 0;
+}
+.scrub-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.scrub-btn:hover { color: var(--ink); background: var(--surface-2); border-color: var(--line); }
+.scrub-btn:focus-visible, .scrub-speed:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.scrub-btn svg { width: 14px; height: 14px; display: block; }
+.scrub-play { color: #fff; background: var(--accent); border-radius: 50%; }
+.scrub-play:hover { color: #fff; background: #9d4726; border-color: transparent; }
+.scrub-play svg { fill: currentColor; }
+.scrub-play .i-pause, .scrub-play.is-playing .i-play { display: none; }
+.scrub-play.is-playing .i-pause { display: inline; }
+.scrub-follow svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.scrub-follow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.scrub-reset { font-size: 17px; color: var(--muted); visibility: hidden; }
+.scrubber.is-active .scrub-reset { visibility: visible; }
+
+.scrub-range {
+  --p: 100%;
+  flex: 1;
+  min-width: 60px;
+  height: 22px;
+  margin: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.scrub-range:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.scrub-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--p), var(--line) var(--p));
+}
+.scrub-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+.scrub-range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+.scrub-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+}
+.scrub-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+}
+/* Inactive: the whole range is shown, so the fill reads as "everything". */
+.scrubber:not(.is-active) .scrub-range::-webkit-slider-runnable-track { background: var(--line); }
+.scrubber:not(.is-active) .scrub-range::-moz-range-progress { background: var(--line); }
+.scrubber:not(.is-active) .scrub-range::-webkit-slider-thumb { background: var(--surface); border-color: var(--muted); }
+.scrubber:not(.is-active) .scrub-range::-moz-range-thumb { background: var(--surface); border-color: var(--muted); }
+
+.scrub-readout {
+  flex: none;
+  min-width: 96px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.scrub-readout strong { font-weight: 650; color: var(--ink); }
+.scrub-readout .r-now { color: var(--muted); }
+.scrub-speed {
+  flex: none;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* "You are here": accent dot in a white ring over a soft halo; larger than
+   the profile hover dot, which is coloured by track type. */
+.here-marker {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(181, 85, 47, .2);
+}
+.here-marker span {
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+}
+
+/* Timeline rows after the scrubber's moment. */
+.entry.is-future, .tile.is-future { opacity: .35; }
+.tile.is-future img { filter: grayscale(.6); }
+
+.profile-svg .p-now .p-ahead { fill: var(--surface); opacity: .55; pointer-events: none; }
+.profile-svg .p-now line { stroke: var(--accent); stroke-width: 2; shape-rendering: crispEdges; pointer-events: none; }
+.profile-svg .p-now circle { fill: var(--accent); stroke: var(--surface); stroke-width: 2; pointer-events: none; }
+
 /* ---------- Narrow screens: bottom sheet ---------- */
 
 @media (max-width: 767px) {
@@ -815,9 +946,26 @@ video.lb-media { background-color: #000; }
     overflow: hidden;
   }
   .timeline.is-expanded { height: 85%; }
-  /* Keep attribution and scale visible above the sheet. */
-  .map .leaflet-bottom { bottom: 45%; transition: bottom .25s ease; }
-  .layout:has(.timeline.is-expanded) .map .leaflet-bottom { bottom: 85%; }
+  /* The scrubber row sits on the map just above the sheet. */
+  .scrubber {
+    position: absolute;
+    left: 0; right: 0; bottom: 45%;
+    z-index: 600;
+    gap: 6px;
+    padding: 0 6px 0 8px;
+    border-top: 1px solid var(--line);
+    background: rgba(255, 255, 255, .95);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, .08);
+    transition: bottom .25s ease;
+  }
+  .layout:has(.timeline.is-expanded) .scrubber { bottom: 85%; }
+  .scrubber { height: 40px; }
+  .scrub-btn { width: 30px; height: 30px; }
+  .scrub-readout { min-width: 0; }
+  .scrub-readout .r-date { font-size: 11px; }
+  /* Keep attribution and scale visible above the sheet and the scrubber. */
+  .map .leaflet-bottom { bottom: calc(45% + 40px); transition: bottom .25s ease; }
+  .layout:has(.timeline.is-expanded) .map .leaflet-bottom { bottom: calc(85% + 40px); }
   .timeline-scroll { padding-bottom: 30vh; }
 
   .sheet-handle {

@@ -48,6 +48,13 @@ const els = {
   profileToggle: document.getElementById('profile-toggle'),
   profileReadout: document.getElementById('profile-readout'),
   profileEmpty: document.getElementById('profile-empty'),
+  scrubber: document.getElementById('scrubber'),
+  scrubPlay: document.getElementById('scrub-play'),
+  scrubRange: document.getElementById('scrub-range'),
+  scrubReadout: document.getElementById('scrub-readout'),
+  scrubSpeed: document.getElementById('scrub-speed'),
+  scrubFollow: document.getElementById('scrub-follow'),
+  scrubReset: document.getElementById('scrub-reset'),
 };
 
 const narrowQuery = window.matchMedia('(max-width: 767px)');
@@ -93,6 +100,7 @@ function makeFormatters(timezone) {
   return {
     time: make(opts.time),
     hour: make(opts.hour),
+    date: make(opts.date), // an instant's local date, "Sat 27 Jun"
     dayShort: dateOnly(opts.date),
     dayLong: dateOnly(opts.longDate),
     mode: shiftMs ? 'offset-fallback' : 'intl',
@@ -337,10 +345,11 @@ function initMap(trip) {
     const line = L.polyline(segs, { color: trackColor(track.type), weight: 4, opacity: 0.95, lineJoin: 'round' });
     line.bindPopup(() => trackPopup(track), { maxWidth: 280 });
     line.on('mouseover', () => line.setStyle({ weight: 6 }));
-    line.on('mouseout', () => line.setStyle({ weight: 4 }));
+    line.on('mouseout', () => styleTrack(track.id));
     casing.addTo(layers.tracks);
     line.addTo(layers.tracks);
-    trackLayers.set(track.id, { line, casing });
+    // segs is the full geometry; the scrubber may draw only part of it.
+    trackLayers.set(track.id, { line, casing, segs, track, ahead: null });
   }
 
   const clustered = [];
@@ -401,8 +410,10 @@ function fitTrip() {
 }
 
 // Visible map area excludes the bottom sheet on narrow screens.
+// The scrubber row sits on the map just above the sheet.
 function sheetHeight() {
-  return narrowQuery.matches ? els.timeline.getBoundingClientRect().height : 0;
+  if (!narrowQuery.matches) return 0;
+  return els.timeline.getBoundingClientRect().height + els.scrubber.getBoundingClientRect().height;
 }
 
 function fitOptions() {
@@ -454,15 +465,27 @@ function setMarkerDimmed(m, dimmed) {
   m.getElement()?.classList.toggle('is-dimmed', dimmed);
 }
 
+const trackInDay = (id) => state.selectedDay == null || state.dayByIndex.get(state.selectedDay).stats.trackIds.includes(id);
+
+// styleTrack applies day dimming and the scrubber's "ahead" style (the part
+// of the route after the chosen moment: faint and dashed).
+function styleTrack(id) {
+  const tl = trackLayers.get(id);
+  if (!tl) return;
+  const on = trackInDay(id);
+  const ahead = scrub.trackState.get(id) === 'ahead';
+  tl.line.setStyle(ahead
+    ? { opacity: on ? AHEAD_OPACITY : 0.18, weight: 3, dashArray: AHEAD_DASH }
+    : { opacity: on ? 0.95 : 0.25, weight: 4, dashArray: null });
+  tl.casing.setStyle({ opacity: ahead ? 0 : on ? 0.85 : 0.2 });
+  tl.ahead?.setStyle({ opacity: on ? AHEAD_OPACITY : 0.18 });
+  tl.line.getElement()?.classList.toggle('is-dimmed', !on);
+}
+
 function applyDayDimming() {
-  const day = state.selectedDay;
-  const dayTracks = day ? new Set(state.dayByIndex.get(day).stats.trackIds) : null;
-  for (const [id, { line, casing }] of trackLayers) {
-    const on = !dayTracks || dayTracks.has(id);
-    line.setStyle({ opacity: on ? 0.95 : 0.25 });
-    casing.setStyle({ opacity: on ? 0.85 : 0.2 });
-    line.getElement()?.classList.toggle('is-dimmed', !on);
-    if (on) line.bringToFront();
+  for (const id of trackLayers.keys()) {
+    styleTrack(id);
+    if (trackInDay(id)) trackLayers.get(id).line.bringToFront();
   }
   for (const [id, m] of markers) setMarkerDimmed(m, isDimmed(id));
   layers.clustered.refreshClusters();
@@ -600,7 +623,12 @@ function dayStatsLine(day) {
   );
 }
 
+// timelineEntries: every timeline row with its time, chronological; the
+// scrubber dims the ones after the chosen moment.
+const timelineEntries = [];
+
 function renderTimeline(trip) {
+  timelineEntries.length = 0;
   const frag = document.createDocumentFragment();
   for (const day of trip.days) {
     const events = day.itemIds.map((id) => {
@@ -634,21 +662,24 @@ function renderTimeline(trip) {
         section.append(hourEl);
         gridEl = null;
       }
+      const node = ev.node();
+      timelineEntries.push({ t: Date.parse(ev.time), el: node });
       if (ev.media) {
         if (!gridEl) {
           gridEl = h('div', { class: 'media-grid' });
           hourEl.append(gridEl);
         }
-        gridEl.append(ev.node());
+        gridEl.append(node);
       } else {
         gridEl = null;
-        hourEl.append(ev.node());
+        hourEl.append(node);
       }
     }
     if (!events.length) section.append(h('p', { class: 'empty-day' }, 'Nothing recorded.'));
     frag.append(section);
   }
   els.scroll.replaceChildren(frag);
+  timelineEntries.sort((a, b) => a.t - b.t);
 }
 
 const CAMERA_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5.6 2.5h4.8l1 1.6H14a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5.1a1 1 0 0 1 1-1h2.6zM8 5.8a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 1.4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z"/></svg>';
@@ -723,7 +754,17 @@ let lastHash = location.hash;
 
 // setHash records the selection in the URL without adding history entries
 // (replaceState does not fire hashchange).
+// hashBase is the item/day part; the scrubber adds t=<ISO UTC> after it.
+let hashBase = '';
 function setHash(value) {
+  hashBase = value || '';
+  writeHash();
+}
+
+function writeHash() {
+  const parts = [hashBase];
+  if (scrub.active) parts.push(`t=${new Date(Math.round(scrub.t / 1000) * 1000).toISOString().replace('.000Z', 'Z')}`);
+  const value = parts.filter(Boolean).join('&');
   const hash = value ? `#${value}` : '';
   lastHash = hash;
   if (location.hash !== hash) history.replaceState(history.state, '', location.pathname + location.search + hash);
@@ -870,8 +911,8 @@ function selectDay(index, { source = 'chip' } = {}) {
 function focusTrack(id) {
   const t = trackLayers.get(id);
   if (!t) return;
-  map.fitBounds(t.line.getBounds(), fitOptions());
-  const pts = t.line.getLatLngs().flat();
+  const pts = t.segs.flat();
+  map.fitBounds(L.latLngBounds(pts), fitOptions());
   t.line.openPopup(pts[Math.floor(pts.length / 2)]);
 }
 
@@ -899,6 +940,9 @@ function applyHash() {
     closeLightbox();
     selectDay(Number(day), { source: 'hash' });
   }
+  const t = Date.parse(params.get('t') || '');
+  if (Number.isFinite(t)) scrubSetTime(t, { source: 'hash' });
+  else if (scrub.active) scrubReset();
 }
 
 // ---------------------------------------------------------------- lightbox
@@ -993,8 +1037,8 @@ function updateMiniMap(item) {
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '&copy; OpenStreetMap',
     }).addTo(miniMap);
-    for (const [, { line }] of trackLayers) {
-      L.polyline(line.getLatLngs(), { color: line.options.color, weight: 3, opacity: 0.9, interactive: false }).addTo(miniMap);
+    for (const [, { line, segs }] of trackLayers) {
+      L.polyline(segs, { color: line.options.color, weight: 3, opacity: 0.9, interactive: false }).addTo(miniMap);
     }
     miniDot = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2, fillColor: cssVar('--accent'), fillOpacity: 1, interactive: false }).addTo(miniMap);
   }
@@ -1402,6 +1446,9 @@ function renderProfile() {
     const cls = isMedia(entry.item) ? 'media' : 'note';
     parts.push(`<line class="p-tick ${cls}" data-i="${i}" x1="${x}" x2="${x}" y1="${tickTop}" y2="${tickTop + TICK_LEN}"/>`);
   });
+  parts.push('<g class="p-now" visibility="hidden">' +
+    `<rect class="p-ahead" x="0" width="0" y="${PM.top}" height="${ph}"/>` +
+    `<line x1="0" x2="0" y1="${PM.top - 4}" y2="${bottom}"/><circle r="5" cx="0" cy="0"/></g>`);
   parts.push('<g class="p-hover" visibility="hidden">' +
     `<line class="p-cursor" x1="0" x2="0" y1="${PM.top}" y2="${bottom}"/>` +
     '<circle class="p-dot" r="4.5" cx="0" cy="0"/></g>');
@@ -1412,8 +1459,11 @@ function renderProfile() {
   profile.ticks = view.items.map((entry, i) => ({ entry, x: xOf(entry.km), el: tickEls[i] }));
   const g = svg.querySelector('.p-hover');
   profile.hoverEls = { g, cursor: g.firstElementChild, dot: g.lastElementChild };
+  const now = svg.querySelector('.p-now');
+  profile.nowEls = { g: now, ahead: now.children[0], line: now.children[1], dot: now.children[2] };
   profile.geom = { W, H, pw, ph, bottom, tickTop, xOf, yOf };
   markProfileSelection();
+  updateProfileNow();
   profile.lastRender = { ms: performance.now() - t0, points: drawn };
 }
 
@@ -1422,6 +1472,7 @@ function updateProfile() {
   if (!state.trip) return;
   profile.view = buildProfileView();
   renderProfile();
+  scrubRangeChanged();
 }
 
 function markProfileSelection() {
@@ -1526,14 +1577,21 @@ function showProfileHover(e) {
   // Position marker on the main map; never pans.
   const ll = [p[0], p[1]];
   if (!profile.marker) {
-    map.createPane('profileHover');
-    map.getPane('profileHover').style.zIndex = 640; // above markers, below popups
-    map.getPane('profileHover').style.pointerEvents = 'none';
+    ensureHoverPane();
     profile.marker = L.circleMarker(ll, { pane: 'profileHover', radius: 7, color: '#fff', weight: 3, fillOpacity: 1, interactive: false });
   }
   profile.marker.setLatLng(ll);
   profile.marker.setStyle({ fillColor: trackColor(seg.track.type) });
   if (!map.hasLayer(profile.marker)) profile.marker.addTo(map);
+}
+
+// The profile hover dot and the scrubber position share a pane above the
+// markers and below popups.
+function ensureHoverPane() {
+  if (map.getPane('profileHover')) return;
+  map.createPane('profileHover');
+  map.getPane('profileHover').style.zIndex = 640;
+  map.getPane('profileHover').style.pointerEvents = 'none';
 }
 
 function dayOfTrack(id) {
@@ -1592,6 +1650,489 @@ function initProfile(trip) {
   }).observe(els.profileBody);
 
   updateProfile();
+}
+
+// ---------------------------------------------------------------- time scrubber
+
+// The time scrubber (SPEC.md 6.5): a moment in the selected day (or the
+// whole trip) moves a "you are here" marker along the tracks, draws the
+// route after it faint and dashed, hides later markers and dims later
+// timeline rows. Inactive (the default) shows everything.
+
+const SCRUB_RATE = 1800; // trip seconds per real second at 1× (1 h per 2 s)
+const GAP_MAX_S = 1; // a gap between tracks takes at most this long to play
+const KEY_STEP_S = 300;
+const KEY_BIG_STEP_S = 3600;
+const AHEAD_OPACITY = 0.55;
+const AHEAD_DASH = '4 7';
+
+const scrub = {
+  ready: false,
+  active: false,
+  t: 0, // current moment, ms since epoch
+  lo: 0, // range, ms
+  hi: 0,
+  tracks: [], // { id, track, t0, t1 } sorted by t0: every track with times
+  rangeTracks: [], // those of the selected day ("All": every track)
+  trackState: new Map(), // id -> 'done' | 'current' | 'ahead'
+  mapItems: [], // { t, m, clustered } for items with a map marker, chronological
+  markerCut: 0, // mapItems[0, markerCut) are on the map
+  timelineCut: 0, // timelineEntries[0, timelineCut) are not dimmed
+  playing: false,
+  speed: 1,
+  follow: false,
+  dragging: false,
+  raf: 0,
+  renderRaf: 0,
+  lastTs: 0,
+  marker: null,
+  pos: null, // last computed position
+};
+
+// throttle calls fn at most every ms milliseconds, the last call always
+// landing (trailing edge). flush runs a pending call now.
+function throttle(fn, ms) {
+  let last = 0;
+  let timer = 0;
+  const run = () => {
+    clearTimeout(timer);
+    timer = 0;
+    last = performance.now();
+    fn();
+  };
+  const call = () => {
+    const wait = ms - (performance.now() - last);
+    if (wait <= 0) run();
+    else if (!timer) timer = setTimeout(run, wait);
+  };
+  call.flush = () => { if (timer) run(); };
+  return call;
+}
+
+const upperBoundT = (arr, t) => lowerBound(arr.length, (i) => arr[i].t, t + 0.5);
+
+// scrubRange returns [lo, hi] in ms: the tracks and items of the selected
+// day, or of the whole trip.
+function scrubRange() {
+  const day = state.selectedDay ? state.dayByIndex.get(state.selectedDay) : null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  const add = (t) => { if (t < lo) lo = t; if (t > hi) hi = t; };
+  for (const s of scrub.rangeTracks) { add(s.t0); add(s.t1); }
+  for (const id of day ? day.itemIds : state.trip.items.map((it) => it.id)) add(Date.parse(state.itemsById.get(id).time));
+  if (!Number.isFinite(lo)) lo = hi = day ? Date.parse(`${day.date}T12:00:00Z`) : Date.now();
+  if (hi - lo < 60000) hi = lo + 60000;
+  return [lo, hi];
+}
+
+// interpolate returns the position on a track at time t (inside its range):
+// linear between the neighbouring points, found by binary search on seconds.
+function interpolate(s, t) {
+  const pts = s.track.points;
+  const sec = (t - s.t0) / 1000;
+  const n = pts.length;
+  const j = lowerBound(n, (k) => pts[k][3], sec);
+  if (j <= 0) return { s, i: 0, f: 0, lat: pts[0][0], lon: pts[0][1] };
+  if (j >= n) return { s, i: n - 1, f: 0, lat: pts[n - 1][0], lon: pts[n - 1][1] };
+  const a = pts[j - 1];
+  const b = pts[j];
+  const f = b[3] > a[3] ? (sec - a[3]) / (b[3] - a[3]) : 0;
+  return { s, i: j - 1, f, lat: a[0] + (b[0] - a[0]) * f, lon: a[1] + (b[1] - a[1]) * f };
+}
+
+// positionAt: inside a track, interpolated (the latest-started track wins
+// when two overlap); between tracks, at the end of the one that ended last;
+// before the range's first track, at its start.
+function positionAt(t) {
+  const list = scrub.rangeTracks.length ? scrub.rangeTracks : scrub.tracks;
+  if (!list.length) return null;
+  let inside = null;
+  let before = null;
+  for (const s of list) {
+    if (s.t0 > t) break;
+    if (t <= s.t1) inside = s;
+    else if (!before || s.t1 > before.t1) before = s;
+  }
+  if (inside) return interpolate(inside, t);
+  if (before) {
+    const p = before.track.points[before.track.points.length - 1];
+    return { s: before, i: before.track.points.length - 1, f: 0, lat: p[0], lon: p[1] };
+  }
+  const p = list[0].track.points[0];
+  return { s: list[0], i: 0, f: 0, lat: p[0], lon: p[1] };
+}
+
+// gapAt returns the stretch without a track around t, or null inside one.
+function gapAt(t) {
+  let start = scrub.lo;
+  let end = scrub.hi;
+  for (const s of scrub.rangeTracks) {
+    if (s.t0 <= t && t < s.t1) return null;
+    if (s.t1 <= t && s.t1 > start) start = s.t1;
+    if (s.t0 > t && s.t0 < end) end = s.t0;
+  }
+  return { start, end };
+}
+
+// splitSegs cuts a track's geometry after point i at the interpolated
+// position: [done, ahead], both arrays of segments.
+function splitSegs(track, i, ll) {
+  const pts = track.points;
+  const starts = [0, ...(track.segmentStarts || []), pts.length];
+  const done = [];
+  const ahead = [];
+  const seg = (a, b) => { const out = []; for (let k = a; k < b; k++) out.push([pts[k][0], pts[k][1]]); return out; };
+  for (let k = 0; k < starts.length - 1; k++) {
+    const a = starts[k];
+    const b = starts[k + 1];
+    if (b - a < 2) continue;
+    if (b - 1 <= i) done.push(seg(a, b));
+    else if (a > i) ahead.push(seg(a, b));
+    else {
+      done.push([...seg(a, i + 1), ll]);
+      ahead.push([ll, ...seg(i + 1, b)]);
+    }
+  }
+  return [done, ahead];
+}
+
+function setTrackState(s, st, pos) {
+  const tl = trackLayers.get(s.id);
+  if (!tl) return;
+  const prev = scrub.trackState.get(s.id) || 'done';
+  if (st === 'current' && pos) {
+    const [done, ahead] = splitSegs(s.track, pos.i, [pos.lat, pos.lon]);
+    tl.line.setLatLngs(done);
+    tl.casing.setLatLngs(done);
+    if (!tl.ahead) {
+      tl.ahead = L.polyline([], {
+        color: trackColor(s.track.type), weight: 3, opacity: AHEAD_OPACITY, dashArray: AHEAD_DASH, interactive: false,
+      });
+    }
+    tl.ahead.setLatLngs(ahead);
+    if (!layers.tracks.hasLayer(tl.ahead)) tl.ahead.addTo(layers.tracks);
+  } else if (prev === 'current') {
+    tl.line.setLatLngs(tl.segs);
+    tl.casing.setLatLngs(tl.segs);
+    tl.ahead?.remove();
+  }
+  if (st !== prev) {
+    scrub.trackState.set(s.id, st);
+    styleTrack(s.id);
+  }
+}
+
+function updateTracks(t) {
+  // The position may come from another track than the one containing t
+  // when tracks overlap; split each current track at its own position.
+  for (const s of scrub.tracks) {
+    let st = 'done';
+    if (scrub.active) st = t >= s.t1 ? 'done' : t < s.t0 ? 'ahead' : 'current';
+    setTrackState(s, st, st === 'current' ? (scrub.pos?.s === s ? scrub.pos : interpolate(s, t)) : null);
+  }
+}
+
+// applyMarkerCut shows the markers of items up to the moment, touching only
+// those whose side of the cut changed, in one batch per layer.
+function applyMarkerCut() {
+  const k = scrub.active ? upperBoundT(scrub.mapItems, scrub.t) : scrub.mapItems.length;
+  const prev = scrub.markerCut;
+  if (k === prev) return;
+  const show = k > prev;
+  const cl = [];
+  for (let i = Math.min(k, prev); i < Math.max(k, prev); i++) {
+    const e = scrub.mapItems[i];
+    if (e.clustered) cl.push(e.m);
+    else if (show) e.m.addTo(layers.plain);
+    else e.m.remove();
+  }
+  if (cl.length) {
+    if (show) layers.clustered.addLayers(cl);
+    else layers.clustered.removeLayers(cl);
+  }
+  scrub.markerCut = k;
+}
+const applyMarkerCutSoon = throttle(applyMarkerCut, 50);
+const writeHashSoon = throttle(writeHash, 250);
+
+function applyTimelineCut() {
+  const list = timelineEntries;
+  const k = scrub.active ? upperBoundT(list, scrub.t) : list.length;
+  const prev = scrub.timelineCut;
+  if (k === prev) return false;
+  const future = k < prev;
+  for (let i = Math.min(k, prev); i < Math.max(k, prev); i++) list[i].el.classList.toggle('is-future', future);
+  scrub.timelineCut = k;
+  return true;
+}
+
+// keepInTimelineView scrolls the timeline (not the page) so el is visible,
+// below the sticky day header.
+function keepInTimelineView(el) {
+  const sr = els.scroll.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  if (r.top >= sr.top + 80 && r.bottom <= sr.bottom - 16) return;
+  els.scroll.scrollTo({ top: els.scroll.scrollTop + r.top - sr.top - sr.height / 2, behavior: 'smooth' });
+}
+
+function updateProfileNow() {
+  const n = profile.nowEls;
+  const geom = profile.geom;
+  if (!n || !geom) return;
+  const segs = profile.view?.segs || [];
+  if (!scrub.active || !segs.length) {
+    n.g.setAttribute('visibility', 'hidden');
+    return;
+  }
+  const t = scrub.t;
+  let km = 0;
+  let ele = null;
+  let inside = null;
+  let before = null;
+  for (const seg of segs) {
+    if (seg.t0 > t) break;
+    if (t <= seg.t1) inside = seg;
+    else if (!before || seg.t1 > before.t1) before = seg;
+  }
+  const eleAt = (seg, i) => (seg.ele ? seg.ele[i] : seg.track.points[i][2]);
+  if (inside) {
+    const p = interpolate({ track: inside.track, t0: inside.t0 }, t);
+    const j = Math.min(p.i + 1, inside.cum.length - 1);
+    km = inside.offset + inside.cum[p.i] + (inside.cum[j] - inside.cum[p.i]) * p.f;
+    ele = eleAt(inside, p.i) + ((eleAt(inside, j) ?? 0) - (eleAt(inside, p.i) ?? 0)) * p.f;
+  } else if (before) {
+    km = before.offset + before.km;
+    ele = eleAt(before, before.cum.length - 1);
+  } else {
+    ele = eleAt(segs[0], 0);
+  }
+  const x = Math.round(geom.xOf(km)) + 0.5;
+  n.ahead.setAttribute('x', x);
+  n.ahead.setAttribute('width', Math.max(0, geom.W - PM.right - x));
+  n.line.setAttribute('x1', x);
+  n.line.setAttribute('x2', x);
+  n.dot.setAttribute('cx', x);
+  n.dot.setAttribute('cy', r1(geom.yOf(ele ?? 0)));
+  n.dot.setAttribute('visibility', ele == null ? 'hidden' : 'inherit');
+  n.g.setAttribute('visibility', 'visible');
+}
+
+function updatePositionMarker() {
+  const pos = scrub.active ? scrub.pos : null;
+  if (!pos) {
+    scrub.marker?.remove();
+    return;
+  }
+  const ll = [pos.lat, pos.lon];
+  if (!scrub.marker) {
+    ensureHoverPane();
+    scrub.marker = L.marker(ll, {
+      pane: 'profileHover',
+      icon: L.divIcon({ className: '', html: '<div class="here-marker"><span></span></div>', iconSize: [34, 34], iconAnchor: [17, 17] }),
+      interactive: false,
+      keyboard: false,
+    });
+  }
+  scrub.marker.setLatLng(ll);
+  if (!map.hasLayer(scrub.marker)) scrub.marker.addTo(map);
+}
+
+// followMarker pans to keep the position in view (never while dragging,
+// and not again while a pan is under way).
+let followPanning = false;
+function followMarker() {
+  if (!scrub.follow || !scrub.active || !scrub.pos || scrub.dragging || followPanning) return;
+  const c = map.getCenter();
+  focusLatLng(L.latLng(scrub.pos.lat, scrub.pos.lon));
+  if (!map.getCenter().equals(c) || map._panAnim?._inProgress) {
+    followPanning = true;
+    map.once('moveend', () => { followPanning = false; });
+  }
+}
+
+function renderReadout() {
+  const ro = els.scrubReadout;
+  if (!scrub.active) {
+    ro.replaceChildren(h('span', { class: 'r-now' }, 'now'));
+    ro.title = 'Showing everything';
+    return;
+  }
+  const d = state.fmt.date(scrub.t);
+  const t = state.fmt.time(scrub.t);
+  ro.replaceChildren(h('span', { class: 'r-date' }, d), ' ', h('strong', {}, t));
+  ro.title = `${d} ${t}`;
+}
+
+function syncSlider() {
+  const r = els.scrubRange;
+  const max = Number(r.max);
+  const v = scrub.active ? Math.round((scrub.t - scrub.lo) / 1000) : max;
+  if (Number(r.value) !== v && !scrub.dragging) r.value = String(v);
+  const frac = max > 0 ? Number(r.value) / max : 1;
+  r.style.setProperty('--p', `${(frac * 100).toFixed(2)}%`);
+  r.setAttribute('aria-valuetext', scrub.active ? `${state.fmt.date(scrub.t)} ${state.fmt.time(scrub.t)}` : 'Now, everything shown');
+}
+
+// renderScrub brings everything in line with scrub.t. Cheap parts run at
+// once; marker rebuilds and hash writes are throttled.
+function renderScrub({ immediate = false, hash = true } = {}) {
+  scrub.renderRaf = 0;
+  scrub.pos = scrub.active ? positionAt(scrub.t) : null;
+  els.scrubber.classList.toggle('is-active', scrub.active);
+  syncSlider();
+  renderReadout();
+  updatePositionMarker();
+  updateTracks(scrub.t);
+  updateProfileNow();
+  const moved = applyTimelineCut();
+  if (moved && scrub.playing && scrub.timelineCut > 0) keepInTimelineView(timelineEntries[scrub.timelineCut - 1].el);
+  if (immediate) {
+    applyMarkerCut();
+    if (hash) writeHash();
+  } else {
+    applyMarkerCutSoon();
+    if (hash) writeHashSoon();
+  }
+  if (scrub.playing) followMarker();
+}
+
+function scheduleScrubRender() {
+  if (!scrub.renderRaf) scrub.renderRaf = requestAnimationFrame(() => renderScrub());
+}
+
+// scrubSetTime activates the scrubber at t (clamped into the range).
+function scrubSetTime(t, { source = 'slider' } = {}) {
+  if (!scrub.ready) return;
+  scrub.active = true;
+  scrub.t = Math.max(scrub.lo, Math.min(scrub.hi, t));
+  if (source === 'play') renderScrub();
+  else if (source === 'slider') scheduleScrubRender();
+  else renderScrub({ immediate: true });
+}
+
+function scrubReset() {
+  setPlaying(false);
+  scrub.active = false;
+  cancelAnimationFrame(scrub.renderRaf);
+  renderScrub({ immediate: true });
+}
+
+// scrubRangeChanged follows the day selection: the range is the day (or the
+// trip); an active scrubber stays active, clamped into it.
+function scrubRangeChanged() {
+  if (!scrub.ready) return;
+  const day = state.selectedDay ? state.dayByIndex.get(state.selectedDay) : null;
+  const ids = day ? new Set(day.stats.trackIds) : null;
+  scrub.rangeTracks = ids ? scrub.tracks.filter((s) => ids.has(s.id)) : scrub.tracks;
+  [scrub.lo, scrub.hi] = scrubRange();
+  els.scrubRange.max = String(Math.round((scrub.hi - scrub.lo) / 1000));
+  if (scrub.active) scrub.t = Math.max(scrub.lo, Math.min(scrub.hi, scrub.t));
+  // Inactive, the hash has no t to change; writing it here at load would
+  // drop the #day/#item not yet applied.
+  renderScrub({ immediate: true, hash: scrub.active });
+}
+
+function setPlaying(on) {
+  scrub.playing = on;
+  els.scrubPlay.classList.toggle('is-playing', on);
+  els.scrubPlay.setAttribute('aria-label', on ? 'Pause' : 'Play');
+  cancelAnimationFrame(scrub.raf);
+  scrub.raf = 0;
+  if (on && !document.hidden) {
+    scrub.lastTs = 0;
+    scrub.raf = requestAnimationFrame(playFrame);
+  }
+}
+
+// playFrame advances 1 trip hour per 2 s at 1×; a gap between tracks is
+// crossed in at most GAP_MAX_S, so nights do not stall playback.
+function playFrame(ts) {
+  scrub.raf = 0;
+  if (!scrub.playing) return;
+  const dt = scrub.lastTs ? Math.min(ts - scrub.lastTs, 100) / 1000 : 0;
+  scrub.lastTs = ts;
+  let rate = SCRUB_RATE * scrub.speed;
+  const gap = gapAt(scrub.t);
+  if (gap) rate = Math.max(rate, (gap.end - gap.start) / 1000 / GAP_MAX_S);
+  let t = scrub.t + rate * dt * 1000;
+  if (gap && t > gap.end && gap.end > scrub.t) t = gap.end; // land on the next track's start
+  const end = t >= scrub.hi;
+  scrubSetTime(t, { source: 'play' });
+  if (end) {
+    setPlaying(false);
+    renderScrub({ immediate: true });
+    return;
+  }
+  scrub.raf = requestAnimationFrame(playFrame);
+}
+
+function initScrubber(trip) {
+  scrub.tracks = trip.tracks
+    .filter((t) => t.start && t.end && t.points?.length)
+    .map((t) => ({ id: t.id, track: t, t0: Date.parse(t.start), t1: Date.parse(t.end) }))
+    .sort((a, b) => a.t0 - b.t0);
+  for (const item of trip.items) {
+    const m = markers.get(item.id);
+    if (m) scrub.mapItems.push({ t: Date.parse(item.time), m, clustered: layerForKind(item.kind) === layers.clustered });
+  }
+  scrub.mapItems.sort((a, b) => a.t - b.t);
+  scrub.markerCut = scrub.mapItems.length;
+  scrub.timelineCut = timelineEntries.length;
+  scrub.ready = true;
+
+  const r = els.scrubRange;
+  const fromSlider = () => scrub.lo + Number(r.value) * 1000;
+  r.addEventListener('pointerdown', () => {
+    scrub.dragging = true;
+    setPlaying(false);
+  });
+  const endDrag = () => {
+    if (!scrub.dragging) return;
+    scrub.dragging = false;
+    if (scrub.active) {
+      renderScrub({ immediate: true });
+      if (scrub.follow) followMarker();
+    }
+  };
+  r.addEventListener('pointerup', endDrag);
+  r.addEventListener('pointercancel', endDrag);
+  r.addEventListener('input', () => scrubSetTime(fromSlider(), { source: 'slider' }));
+  r.addEventListener('change', endDrag);
+  r.addEventListener('keydown', (e) => {
+    const dir = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+    if (!dir || e.altKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    const base = scrub.active ? scrub.t : scrub.hi;
+    scrubSetTime(base + dir * (e.shiftKey ? KEY_BIG_STEP_S : KEY_STEP_S) * 1000, { source: 'key' });
+    if (scrub.follow) followMarker();
+  });
+
+  els.scrubPlay.addEventListener('click', () => {
+    if (scrub.playing) {
+      setPlaying(false);
+      renderScrub({ immediate: true });
+      return;
+    }
+    // From inactive or the end, start over at the beginning of the range.
+    if (!scrub.active || scrub.t >= scrub.hi) scrubSetTime(scrub.lo, { source: 'key' });
+    setPlaying(true);
+  });
+  els.scrubSpeed.addEventListener('change', () => { scrub.speed = Number(els.scrubSpeed.value) || 1; });
+  els.scrubFollow.addEventListener('click', () => {
+    scrub.follow = !scrub.follow;
+    els.scrubFollow.setAttribute('aria-pressed', String(scrub.follow));
+    if (scrub.follow) followMarker();
+  });
+  els.scrubReset.addEventListener('click', scrubReset);
+  document.addEventListener('visibilitychange', () => {
+    if (!scrub.playing) return;
+    cancelAnimationFrame(scrub.raf);
+    scrub.raf = 0;
+    if (!document.hidden) {
+      scrub.lastTs = 0;
+      scrub.raf = requestAnimationFrame(playFrame);
+    }
+  });
 }
 
 // ---------------------------------------------------------------- init
@@ -1668,12 +2209,13 @@ async function main() {
   initSheet();
   initKeys();
   initLightbox();
+  initScrubber(trip);
   initProfile(trip);
   applyHash();
   window.addEventListener('hashchange', () => { if (location.hash !== lastHash) applyHash(); });
   window.addEventListener('popstate', onPopState);
   // Handle for debugging from the console.
-  window.touringDiary = { map, state, selectItem, selectDay, openLightbox, closeLightbox, profile };
+  window.touringDiary = { map, state, selectItem, selectDay, openLightbox, closeLightbox, profile, scrub, scrubSetTime, scrubReset };
 }
 
 main();

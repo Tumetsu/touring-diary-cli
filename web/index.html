@@ -27,6 +27,23 @@
     </aside>
     <div class="map-area">
       <div class="map" id="map" role="region" aria-label="Map"></div>
+      <div class="scrubber" id="scrubber" role="group" aria-label="Time scrubber">
+        <button class="scrub-btn scrub-play" id="scrub-play" type="button" aria-label="Play">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-play" d="M4.5 2.8v10.4L13 8z"/><path class="i-pause" d="M4 3h3v10H4zM9 3h3v10H9z"/></svg>
+        </button>
+        <input class="scrub-range" id="scrub-range" type="range" min="0" max="1" step="60" value="1" aria-label="Moment in the trip">
+        <output class="scrub-readout" id="scrub-readout" aria-live="off"></output>
+        <select class="scrub-speed" id="scrub-speed" aria-label="Playback speed" title="Playback speed (1× = 1 trip hour per 2 s)">
+          <option value="0.5">½×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
+        <button class="scrub-btn scrub-follow" id="scrub-follow" type="button" aria-pressed="false" aria-label="Follow position on the map" title="Follow: keep the position in view">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.2"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg>
+        </button>
+        <button class="scrub-btn scrub-reset" id="scrub-reset" type="button" aria-label="Show everything (reset time)" title="Show everything">×</button>
+      </div>
       <section class="profile" id="profile" aria-label="Elevation profile">
         <header class="profile-head">
           <h2 class="profile-title">Elevation</h2>
