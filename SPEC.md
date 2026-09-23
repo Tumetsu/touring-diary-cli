@@ -120,7 +120,7 @@ touring-diary build \
   [--config trip.json] [--overrides overrides.json] \
   [--max-gap 12h] [--photo-size 1600] [--thumb-size 320] \
   [--format jpeg|webp] [--photo-quality 85] [--thumb-quality 80] \
-  [--preset web] [--max-output-mb N] \
+  [--preset web] [--max-output-mb N] [--cloudflare-auth] \
   [--live-photos] [--no-video] [--force] [--verbose]
 ```
 
@@ -143,6 +143,21 @@ touring-diary build \
   the CLI value wins). Precedence is CLI > config > preset > built-in default.
   `--no-video=false` on the command line (or `"noVideo": false` in the config)
   keeps videos with the preset. Unknown preset names are an error.
+- `--cloudflare-auth` (config `cloudflareAuth`): write `<out>/_worker.js`, a
+  self-contained Cloudflare Pages advanced-mode worker (`export default { fetch }`)
+  that requires HTTP Basic Auth on every request and then serves the file with
+  `env.ASSETS.fetch(request)`. `_worker.js` is used rather than
+  `functions/_middleware.js` because Pages reads it from the deployed folder,
+  whereas `functions/` is read from the project root. It reads the Pages secrets
+  `AUTH_USER` and `AUTH_PASSWORD`; when either is unset it answers 500 naming the
+  variable (fails closed). Credentials are decoded as UTF-8 and compared in
+  constant time; a failure answers 401 with
+  `WWW-Authenticate: Basic realm="<title>", charset="UTF-8"` (quotes, backslashes
+  and control characters removed from the title) and `Cache-Control: no-store`.
+  Without the flag a `_worker.js` left by an earlier build is removed. Every build
+  also silently removes a `functions/_middleware.js` written by the previous
+  version (and `functions/` if that empties it). The summary prints
+  `cloudflare auth: _worker.js written` or `... removed`.
 - Output of a run ends with a summary: tracks, notes, media counted by placement
   source, the image settings, and a list of skipped files with reasons, then a
   size report of `<out>`: total, and per category (photos, thumbnails, videos,
@@ -274,7 +289,10 @@ dist/
   media/<id>.jpg, <id>_thumb.jpg (photos and video posters), <id>.mp4, <id>_poster.jpg
                      (.webp instead of .jpg with --format webp)
   .cache.json
+  _worker.js         (only with --cloudflare-auth, see 3)
 ```
+
+`_worker.js` counts as site assets in the size report.
 
 ### 5.1 `trip.json`
 

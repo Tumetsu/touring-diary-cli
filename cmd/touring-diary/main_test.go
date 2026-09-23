@@ -33,12 +33,12 @@ func TestBuildHelpListsEveryFlagWithDefault(t *testing.T) {
 	help := out.String()
 	for _, name := range []string{"gpx", "notes", "media", "out", "title", "tz", "config", "overrides",
 		"max-gap", "photo-size", "thumb-size", "live-photos", "no-video", "force", "verbose",
-		"format", "photo-quality", "thumb-quality", "preset", "max-output-mb"} {
+		"format", "photo-quality", "thumb-quality", "preset", "max-output-mb", "cloudflare-auth"} {
 		if !strings.Contains(help, "--"+name) {
 			t.Errorf("help lacks --%s", name)
 		}
 	}
-	if got, want := strings.Count(help, "(default: "), 20; got != want {
+	if got, want := strings.Count(help, "(default: "), 21; got != want {
 		t.Errorf("%d defaults listed, want %d", got, want)
 	}
 	for _, want := range []string{"(default: 12h)", "(default: 1600)", "(default: 320)", "(default: jpeg)",

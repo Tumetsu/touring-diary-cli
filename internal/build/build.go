@@ -52,6 +52,9 @@ type Options struct {
 	// MaxOutputMB warns when the output is larger (0: no limit).
 	MaxOutputMB float64
 	Force       bool
+	// CloudflareAuth writes _worker.js, a Cloudflare Pages advanced-mode
+	// worker requiring HTTP Basic Auth; when off, an earlier one is removed.
+	CloudflareAuth bool
 	// FFmpeg/FFprobe are tool paths; empty means look up on PATH, ToolOff
 	// means treat as missing.
 	FFmpeg, FFprobe string
@@ -84,6 +87,9 @@ type Summary struct {
 	// to warn about (0: none).
 	Size        SizeReport
 	MaxOutputMB float64
+	// CloudflareAuth is "written" or "removed" when the build wrote or
+	// removed _worker.js, "" otherwise.
+	CloudflareAuth string
 }
 
 // Run executes a build and writes <out>/trip.json. It returns an error only
@@ -158,6 +164,7 @@ func newBuilder(opts Options) (*builder, error) {
 		return nil, err
 	}
 	o.LivePhotos = o.LivePhotos || b.cfg.LivePhotos
+	o.CloudflareAuth = o.CloudflareAuth || b.cfg.CloudflareAuth
 	if o.OutDir == "" {
 		return nil, errors.New("--out is required")
 	}
@@ -286,6 +293,9 @@ func (b *builder) run() (*Summary, error) {
 		return nil, err
 	}
 	// --- end web assets ---
+	if b.sum.CloudflareAuth, err = syncCloudflareAuth(b.opts.OutDir, b.opts.Title, b.opts.CloudflareAuth); err != nil {
+		return nil, err
+	}
 	b.sum.OutPath = out
 	b.sum.Days = len(days)
 	o := b.opts

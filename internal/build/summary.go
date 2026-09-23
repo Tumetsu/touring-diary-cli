@@ -48,6 +48,9 @@ func (s *Summary) Print(w io.Writer) error {
 			ew.printf("  %s: %s\n", sk.Path, sk.Reason)
 		}
 	}
+	if s.CloudflareAuth != "" {
+		ew.printf("cloudflare auth: %s %s\n", CloudflareWorker, s.CloudflareAuth)
+	}
 	s.printSize(ew)
 	return ew.err
 }

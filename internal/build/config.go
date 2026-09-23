@@ -23,13 +23,15 @@ type Config struct {
 	ThumbSize  int      `json:"thumbSize"`
 	LivePhotos bool     `json:"livePhotos"`
 	// NoVideo is a pointer so that an explicit false wins over a preset.
-	NoVideo      *bool                `json:"noVideo"`
-	Format       string               `json:"format"`
-	PhotoQuality int                  `json:"photoQuality"`
-	ThumbQuality int                  `json:"thumbQuality"`
-	Preset       string               `json:"preset"`
-	MaxOutputMB  float64              `json:"maxOutputMb"`
-	Days         map[string]DayConfig `json:"days"`
+	NoVideo      *bool   `json:"noVideo"`
+	Format       string  `json:"format"`
+	PhotoQuality int     `json:"photoQuality"`
+	ThumbQuality int     `json:"thumbQuality"`
+	Preset       string  `json:"preset"`
+	MaxOutputMB  float64 `json:"maxOutputMb"`
+	// CloudflareAuth mirrors --cloudflare-auth.
+	CloudflareAuth bool                 `json:"cloudflareAuth"`
+	Days           map[string]DayConfig `json:"days"`
 	// Map settings are read by the frontend milestone; kept here so config
 	// files validate.
 	Map json.RawMessage `json:"map"`

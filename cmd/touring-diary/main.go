@@ -41,6 +41,7 @@ main build flags:
   --tz ZONE                             trip timezone, e.g. Europe/Helsinki
   --config FILE, --overrides FILE       trip config and per-item overrides (JSON)
   --preset web                          smaller output for static hosting
+  --cloudflare-auth                     password-protect the site on Cloudflare Pages
   --force                               ignore the conversion cache
 
 run "touring-diary build -h" for all flags with their defaults.
@@ -121,6 +122,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	fs.Float64Var(&o.MaxOutputMB, "max-output-mb", 0, "warn when the output folder is larger than this many MB")
 	fs.BoolVar(&o.LivePhotos, "live-photos", false, "convert and attach Live Photo motion videos")
 	fs.BoolVar(&o.NoVideo, "no-video", false, "skip videos entirely")
+	fs.BoolVar(&o.CloudflareAuth, "cloudflare-auth", false, "write _worker.js: HTTP Basic Auth on Cloudflare Pages (secrets AUTH_USER, AUTH_PASSWORD)")
 	fs.BoolVar(&o.Force, "force", false, "ignore the conversion cache and rebuild all media")
 	fs.BoolVar(&o.Verbose, "verbose", false, "log every media file and placement detail")
 	fs.Usage = func() {

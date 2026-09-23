@@ -148,6 +148,7 @@ only when an input folder cannot be read or the output cannot be written.
 | `--thumb-quality N` | `80` | encoder quality (1–100) of thumbnails |
 | `--preset web` | none | defaults for a small site; see [Publishing](#publishing) |
 | `--max-output-mb N` | none | warn when the output folder is larger than N MB |
+| `--cloudflare-auth` | off | write `_worker.js`, which password-protects the site on Cloudflare Pages; see [Publishing](#cloudflare-pages-with-a-password). Without the flag an earlier `_worker.js` is removed |
 | `--live-photos` | off | convert and attach Live Photo videos |
 | `--no-video` | off | skip videos entirely, and delete video outputs of earlier builds from the output folder |
 | `--force` | off | ignore the conversion cache and convert all media again |
@@ -178,6 +179,7 @@ given on the command line wins over the file.
   "thumbQuality": 80,
   "preset": "",
   "maxOutputMb": 0,
+  "cloudflareAuth": false,
   "livePhotos": false,
   "noVideo": false,
   "days": {
@@ -254,6 +256,7 @@ dist/
   media/<id>.mp4                   video, H.264/AAC, long edge at most 1920 px
   media/<id>_poster.jpg            video poster frame
   .cache.json                      conversion cache (need not be published)
+  _worker.js                       password gate for Cloudflare Pages (only with --cloudflare-auth)
 ```
 
 With `--format webp` the images end in `.webp` instead of `.jpg`.
@@ -353,6 +356,51 @@ holding your config file.
   ```
 
 Then choose Settings → Pages → branch `gh-pages`, folder `/ (root)`.
+
+### Cloudflare Pages with a password
+
+`--cloudflare-auth` adds `_worker.js` to the output: a Cloudflare Pages worker
+("advanced mode") that asks every visitor for a user name and password (HTTP Basic
+Auth) before serving any file, `trip.json` and photos included. The credentials are
+secrets of the Pages project, so the password is never in the built files or in
+git. If a secret is missing, the site answers every request with an error instead
+of opening up. The browser remembers the credentials until it is closed, so
+visitors log in once per session.
+
+The gate is `_worker.js` rather than a `functions/` folder because Pages reads
+`_worker.js` from the folder being deployed, while `functions/` is read from the
+directory Wrangler runs in; so the deploy command below works from anywhere.
+
+1. Install Wrangler, Cloudflare's CLI (or prefix every command below with `npx`
+   instead), and log in to your Cloudflare account:
+   ```sh
+   npm i -g wrangler        # or use: npx wrangler ...
+   wrangler login
+   ```
+2. Build the site:
+   ```sh
+   touring-diary build --config trip.json --preset web --cloudflare-auth --out site
+   ```
+3. Create the Pages project once (`<name>` becomes `https://<name>.pages.dev`):
+   ```sh
+   wrangler pages project create <name> --production-branch main
+   ```
+4. Set the user name and the password; each command prompts for the value:
+   ```sh
+   wrangler pages secret put AUTH_USER --project-name <name>
+   wrangler pages secret put AUTH_PASSWORD --project-name <name>
+   ```
+5. Deploy:
+   ```sh
+   wrangler pages deploy site --project-name <name>
+   ```
+   Open `https://<name>.pages.dev`; the browser should ask for the password.
+6. After each rebuild into `site/`, deploy again with the same command.
+
+The free plan allows 25 MB per file and 20,000 files per deployment; the size
+report shows the largest file. Keep `--cloudflare-auth` on every build of this
+folder: a build without it removes `_worker.js`, and the next deploy would be
+public. Changing a secret takes effect on the next deployment.
 
 ### Map tiles and privacy
 
