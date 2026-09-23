@@ -114,6 +114,12 @@ func IsMedia(name string) bool {
 	return ok
 }
 
+// IsVideo reports whether name has a supported video extension.
+func IsVideo(name string) bool {
+	f, ok := formats[strings.ToLower(filepath.Ext(name))]
+	return ok && f.kind == KindVideo
+}
+
 // Scan walks dir recursively and reads metadata from every supported file.
 // Only an unreadable dir is an error; bad files end up in Result.Skipped.
 func Scan(dir string, opts Options) (Result, error) {

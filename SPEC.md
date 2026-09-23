@@ -19,7 +19,7 @@ Goals
   when present, otherwise from the GPX tracks by timestamp.
 - The site works offline apart from map tiles. No server, no build step for the
   reader, deployable to any static host.
-- HEIC input is converted to JPEG. Videos are made browser-playable.
+- HEIC input is converted to JPEG (or WebP with `--format webp`). Videos are made browser-playable.
 - Re-running the build is fast: media conversion is cached.
 
 Non-goals (for now)
@@ -104,7 +104,8 @@ the odd wrong GPS fix.
 }
 ```
 
-Every CLI flag has a config equivalent; CLI wins. `excludeFromFit: true` leaves a
+Every CLI flag has a config equivalent (camelCase: `photoSize`, `format`,
+`photoQuality`, `thumbQuality`, `preset`, `maxOutputMb`, `noVideo`, ...); CLI wins. `excludeFromFit: true` leaves a
 day out of the map's initial view (`fitBounds` in 5.1), e.g. a travel day far from
 the route; the day is otherwise shown as usual. A config date that matches no day
 is warned about.
@@ -118,6 +119,8 @@ touring-diary build \
   [--title "Lapland 2026"] [--tz Europe/Helsinki] \
   [--config trip.json] [--overrides overrides.json] \
   [--max-gap 12h] [--photo-size 1600] [--thumb-size 320] \
+  [--format jpeg|webp] [--photo-quality 85] [--thumb-quality 80] \
+  [--preset web] [--max-output-mb N] \
   [--live-photos] [--no-video] [--force] [--verbose]
 ```
 
@@ -132,8 +135,23 @@ touring-diary build \
   be snapped. Default 12 h. Beyond that the item is placed on the timeline only.
 - Exit code 0 with warnings printed for skipped files; non-zero only for unreadable
   input folders or a failed output write.
+- `--format`, `--photo-quality`, `--thumb-quality`: image format and encoder
+  qualities (1–100) of converted images, see 4.5.
+- `--preset web`: defaults for publishing on a static host. It sets `--format webp
+  --photo-size 1400 --photo-quality 80 --thumb-quality 75 --no-video`, each only when
+  neither the command line nor the config file sets it (config `preset` is the same;
+  the CLI value wins). Precedence is CLI > config > preset > built-in default.
+  `--no-video=false` on the command line (or `"noVideo": false` in the config)
+  keeps videos with the preset. Unknown preset names are an error.
 - Output of a run ends with a summary: tracks, notes, media counted by placement
-  source, and a list of skipped files with reasons.
+  source, the image settings, and a list of skipped files with reasons, then a
+  size report of `<out>`: total, and per category (photos, thumbnails, videos,
+  posters, `trip.json` + site assets) in MB (10^6 bytes) with one decimal, and the
+  largest single file. `.cache.json` and `*.tmp` are not counted. Media outputs
+  kept for the cache but not referenced by `trip.json` (4.5) are listed as
+  "unused media". With `--no-video`, earlier video outputs are deleted and the
+  summary prints `removed N video outputs (--no-video)`. `--max-output-mb N` prints a warning when the total is over N;
+  it is never an error.
 
 ## 4. Processing pipeline
 
@@ -208,27 +226,38 @@ outliers.
 ### 4.5 Media conversion
 
 - Images: decode (HEIC via `gen2brain/heic`, others via stdlib), apply orientation, write
-  `media/<id>.jpg` at max `--photo-size` on the long edge (quality 85) and
-  `media/<id>_thumb.jpg` at `--thumb-size` (quality 80). EXIF is not copied to the
-  outputs, so published files carry no GPS. Width/height are stored in `trip.json`
-  for layout.
+  `media/<id>.<ext>` at max `--photo-size` on the long edge (`--photo-quality`,
+  default 85) and `media/<id>_thumb.<ext>` at `--thumb-size` (`--thumb-quality`,
+  default 80). `--format` picks the encoder: `jpeg` (default, stdlib, ext `jpg`) or
+  `webp` (`gen2brain/webp`, lossy, method 4, ext `webp`; libwebp loaded at run
+  time when installed, else its WebAssembly build, which `-tags nodynamic` always
+  uses). The qualities mean the same slider for both encoders. EXIF is not copied to
+  the outputs, so published files carry no GPS. Width/height are stored in
+  `trip.json` for layout.
 - Videos: if `ffmpeg` is on `PATH`, transcode to H.264/AAC MP4 (`-crf 23
   -maxrate 8M -bufsize 16M`, `-movflags +faststart`, long edge capped at 1920 px,
   first video and first audio stream only, `-map_metadata -1` so no GPS or creation
-  tags leak) and extract a poster JPEG at 1 s (`<id>_poster.jpg` at `--photo-size`,
-  `<id>_thumb.jpg` at `--thumb-size` for markers and timeline tiles). iPhone MOV files are HEVC and often
+  tags leak) and extract a poster at 1 s in `--format` (`<id>_poster.<ext>` at
+  `--photo-size` and `--photo-quality`, `<id>_thumb.<ext>` at `--thumb-size` and
+  `--thumb-quality` for markers and timeline tiles). iPhone MOV files are HEVC and often
   HLG HDR: when ffmpeg has `zscale`/`tonemap`, the output is tone-mapped to BT.709,
   otherwise it is encoded as-is and looks washed out. Without `ffmpeg` the video is
-  copied unchanged and a warning is printed. `--no-video` skips videos entirely.
+  copied unchanged and a warning is printed. `--no-video` skips videos entirely
+  and deletes their earlier outputs (see below).
 - Media with their own GPS but horizontal accuracy worse than 500 m keep their
   position (`source: "gps"`) but are not used as anchors. `accuracyM` is emitted
   so the UI can flag them.
 - The media scan is recursive. Outputs in `<out>/media` that no longer correspond
   to a source file are removed on each build. Outputs of files that still exist but
-  were not converted in this run (`--no-video`, no `ffprobe`, a `skip` override, a
-  failed conversion) are kept.
+  were not converted in this run because of a transient condition (no `ffprobe`, a
+  `skip` override, a failed conversion) are kept. `--no-video` is different: it
+  removes the outputs of every video (`<id>.mp4`, `<id>_poster.*`, `<id>_thumb.*`)
+  and their cache entries, so a published folder never holds unused video; a later
+  build with videos transcodes them again. The summary says
+  `removed N video outputs (--no-video)` when this happens.
 - Cache: the build keeps `dist/.cache.json` mapping source path + size + mtime +
-  conversion parameters to output filenames. Unchanged files are skipped. `--force`
+  conversion parameters (sizes, format, qualities, ffmpeg arguments) to output
+  filenames. A format change converts again and removes the old-format outputs. Unchanged files are skipped. `--force`
   rebuilds everything.
 - Output ids are `<sha1(source path)[:10]>` so renaming the trip folder does not
   invalidate the cache and filenames never collide.
@@ -243,6 +272,7 @@ dist/
   vendor/            leaflet.js, leaflet.css, leaflet.markercluster.*, images
   trip.json
   media/<id>.jpg, <id>_thumb.jpg (photos and video posters), <id>.mp4, <id>_poster.jpg
+                     (.webp instead of .jpg with --format webp)
   .cache.json
 ```
 
@@ -281,6 +311,7 @@ dist/
       "placement": { "source": "gps" }, "original": "IMG_1932.JPG" },   // optional fields are omitted, not null
     { "id": "m51e0b77a09", "kind": "video", "time": "...", "src": "media/....mp4", "poster": "media/...._poster.jpg",
       "thumb": "media/...._thumb.jpg",   // poster at thumb size; both omitted without ffmpeg
+      // src/thumb/poster of images end in .webp with --format webp; the frontend uses them as given
       "durationS": 12.4, "lat": null, "lon": null, "placement": { "source": "none", "gapSeconds": 51000 } }
   ]
 }
@@ -406,6 +437,7 @@ chips.
 | EXIF | `github.com/evanoberholster/imagemeta` v1.1.x for both HEIC and JPEG | Pure Go. `OriginalDate()` returns the time with `OffsetTimeOriginal` applied; `GPS.Latitude()/Longitude()` give signed decimal degrees (0,0 means absent); `HPositioningError()` for accuracy; `IFD0.Orientation` for the JPEG rotate step. `gen2brain/heic.DecodeExif` lacks the offset field, so it is used only for pixels. |
 | Static binary | default build links dynamically (purego needs `dlopen` for libheif); `-tags nodynamic` gives a fully static ~12 MB binary that always uses WASM | Release builds use `nodynamic` for portability. Developers on machines with libheif can use the default build for speed. |
 | Image resize / JPEG | `golang.org/x/image/draw` (CatmullRom) + stdlib `image/jpeg` | No dependency beyond `x/image`. Orientation is applied with plain rotate/flip on the decoded image. |
+| WebP output | `github.com/gen2brain/webp` | Same author and design as the HEIC decoder: libwebp via purego when installed, else libwebp compiled to WASM (wazero), no cgo; `-tags nodynamic` forces WASM. About 25 ms (native) / 400 ms (WASM) per 1400 px photo. |
 | Video | `ffmpeg`/`ffprobe` as optional system dependencies | Only practical way to read QuickTime metadata and transcode HEVC. Same in any language. |
 | CLI | stdlib `flag` with a `build`/`serve` subcommand switch | Few flags; avoids a dependency. |
 | Map | Leaflet 1.9 + markercluster, raster OpenStreetMap and OpenTopoMap tiles | Free tiles without API keys. MapLibre would need a vector tile provider, which means a key or self-hosting. |

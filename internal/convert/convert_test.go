@@ -1,9 +1,13 @@
 package convert
 
 import (
+	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,5 +281,95 @@ func TestRunVideoTranscode(t *testing.T) {
 	}
 	if _, st, _ = c.Run(files); st.Cached != 2 || st.Failed != 1 {
 		t.Errorf("second run %+v", st)
+	}
+}
+
+func TestEncodeImageFormats(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 24))
+	for i := range img.Pix {
+		img.Pix[i] = byte(i * 7)
+	}
+	for _, tc := range []struct {
+		format string
+		magic  func([]byte) bool
+	}{
+		{FormatJPEG, func(b []byte) bool { return len(b) > 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF }},
+		{FormatWebP, func(b []byte) bool { return len(b) > 12 && string(b[:4]) == "RIFF" && string(b[8:12]) == "WEBP" }},
+	} {
+		var lo, hi bytes.Buffer
+		if err := encodeImage(&lo, img, tc.format, 10); err != nil {
+			t.Fatalf("%s: %v", tc.format, err)
+		}
+		if err := encodeImage(&hi, img, tc.format, 100); err != nil {
+			t.Fatalf("%s: %v", tc.format, err)
+		}
+		if !tc.magic(lo.Bytes()) || !tc.magic(hi.Bytes()) {
+			t.Errorf("%s: wrong magic bytes % x", tc.format, lo.Bytes()[:12])
+		}
+		if lo.Len() >= hi.Len() {
+			t.Errorf("%s: quality not applied: q10 %d bytes, q100 %d bytes", tc.format, lo.Len(), hi.Len())
+		}
+	}
+	if err := encodeImage(io.Discard, img, "gif", 80); err == nil {
+		t.Error("unknown format accepted")
+	}
+}
+
+func TestRunWebPOutputsAndCacheParams(t *testing.T) {
+	out := t.TempDir()
+	files := []media.File{fixture(t, "gps_offset.jpg", "jpeg", media.KindPhoto)}
+	id := ID("gps_offset.jpg")
+	c := &Converter{OutDir: out, Params: Params{PhotoSize: 40, ThumbSize: 16}}
+	if _, _, err := c.Run(files); err != nil {
+		t.Fatal(err)
+	}
+	c.Params.Format = FormatWebP
+	outs, st, err := c.Run(files)
+	if err != nil || outs[0].Err != nil {
+		t.Fatal(err, outs[0].Err)
+	}
+	if st.Converted != 1 {
+		t.Errorf("format change did not reconvert: %+v", st)
+	}
+	if outs[0].Src != "media/"+id+".webp" || outs[0].Thumb != "media/"+id+"_thumb.webp" {
+		t.Errorf("paths %s %s", outs[0].Src, outs[0].Thumb)
+	}
+	for _, p := range []string{outs[0].Src, outs[0].Thumb} {
+		b, err := os.ReadFile(filepath.Join(out, p))
+		if err != nil || string(b[8:12]) != "WEBP" {
+			t.Errorf("%s is not WebP: %v", p, err)
+		}
+	}
+	// The JPEG outputs of the previous format are removed.
+	if _, err := os.Stat(filepath.Join(out, "media", id+".jpg")); !os.IsNotExist(err) {
+		t.Errorf("stale jpeg kept: %v", err)
+	}
+	// Quality changes invalidate the cache too.
+	c.Params.ThumbQuality = 50
+	if _, st, _ := c.Run(files); st.Converted != 1 {
+		t.Errorf("quality change did not reconvert: %+v", st)
+	}
+	if _, st, _ := c.Run(files); st.Cached != 1 {
+		t.Errorf("unchanged run not cached: %+v", st)
+	}
+}
+
+func TestParamsHashJPEGUnchanged(t *testing.T) {
+	// Defaults (zero values) and explicit JPEG settings hash alike, and the
+	// JPEG hash keeps the pre-format-option string so old caches stay valid.
+	c := &Converter{Params: Params{PhotoSize: 1600, ThumbSize: 320}}
+	tk := task{kind: "photo"}
+	def := c.paramsHash(tk, false)
+	c.Params = Params{PhotoSize: 1600, ThumbSize: 320, Format: FormatJPEG, PhotoQuality: 85, ThumbQuality: 80}
+	if c.paramsHash(tk, false) != def {
+		t.Error("explicit defaults change the hash")
+	}
+	sum := sha1.Sum([]byte("photo v1 size=1600 q=85 thumb=320 q=80"))
+	if def != hex.EncodeToString(sum[:8]) {
+		t.Error("JPEG params hash changed; existing caches would be invalidated")
+	}
+	c.Params.Format = FormatWebP
+	if c.paramsHash(tk, false) == def {
+		t.Error("format not in the hash")
 	}
 }

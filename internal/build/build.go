@@ -38,10 +38,20 @@ type Options struct {
 	ConfigPath, OverridesPath          string
 	MaxGap                             time.Duration
 	Verbose                            bool
-	// Media conversion (spec 4.5). Zero sizes mean the defaults.
-	PhotoSize, ThumbSize int
-	LivePhotos, NoVideo  bool
-	Force                bool
+	// Media conversion (spec 4.5). Zero sizes and qualities and an empty
+	// format mean "not set": the config, the preset or the default fills them.
+	PhotoSize, ThumbSize       int
+	Format                     string // "jpeg" or "webp"
+	PhotoQuality, ThumbQuality int    // 1-100
+	LivePhotos, NoVideo        bool
+	// NoVideoSet records that --no-video was given on the command line, so
+	// an explicit --no-video=false wins over the config and the preset.
+	NoVideoSet bool
+	// Preset names a set of defaults (see Presets); "" for none.
+	Preset string
+	// MaxOutputMB warns when the output is larger (0: no limit).
+	MaxOutputMB float64
+	Force       bool
 	// FFmpeg/FFprobe are tool paths; empty means look up on PATH, ToolOff
 	// means treat as missing.
 	FFmpeg, FFprobe string
@@ -67,6 +77,13 @@ type Summary struct {
 	MediaBy                           map[model.PlacementSource]int
 	MediaConversion                   convert.Stats
 	Skipped                           []model.Skipped
+	// Image settings in effect, for the summary.
+	Format                                           string
+	PhotoSize, ThumbSize, PhotoQuality, ThumbQuality int
+	// Size is the output folder's size by category; MaxOutputMB the limit
+	// to warn about (0: none).
+	Size        SizeReport
+	MaxOutputMB float64
 }
 
 // Run executes a build and writes <out>/trip.json. It returns an error only
@@ -137,10 +154,10 @@ func newBuilder(opts Options) (*builder, error) {
 	if o.MaxGap <= 0 {
 		o.MaxGap = placement.DefaultMaxGap
 	}
-	o.PhotoSize = firstPositive(o.PhotoSize, b.cfg.PhotoSize, convert.DefaultPhotoSize)
-	o.ThumbSize = firstPositive(o.ThumbSize, b.cfg.ThumbSize, convert.DefaultThumbSize)
+	if err := b.resolveImageOptions(); err != nil {
+		return nil, err
+	}
 	o.LivePhotos = o.LivePhotos || b.cfg.LivePhotos
-	o.NoVideo = o.NoVideo || b.cfg.NoVideo
 	if o.OutDir == "" {
 		return nil, errors.New("--out is required")
 	}
@@ -271,7 +288,29 @@ func (b *builder) run() (*Summary, error) {
 	// --- end web assets ---
 	b.sum.OutPath = out
 	b.sum.Days = len(days)
+	o := b.opts
+	b.sum.Format, b.sum.PhotoSize, b.sum.ThumbSize = o.Format, o.PhotoSize, o.ThumbSize
+	b.sum.PhotoQuality, b.sum.ThumbQuality, b.sum.MaxOutputMB = o.PhotoQuality, o.ThumbQuality, o.MaxOutputMB
+	if b.sum.Size, err = MeasureOutput(o.OutDir, referencedMedia(items)); err != nil {
+		b.log.Printf("warning: measure output size: %v", err)
+	}
 	return b.sum, nil
+}
+
+// referencedMedia returns the media paths trip.json refers to.
+func referencedMedia(items []model.Item) map[string]bool {
+	ref := map[string]bool{}
+	for _, it := range items {
+		for _, p := range []string{it.Src, it.Thumb, it.Poster} {
+			if p != "" {
+				ref[p] = true
+			}
+		}
+		if it.LivePhoto != nil {
+			ref[*it.LivePhoto] = true
+		}
+	}
+	return ref
 }
 
 // resolveZone picks the trip zone: CLI/config, else the most common offset

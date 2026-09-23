@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/evanoberholster/imagemeta v1.1.0
 	github.com/gen2brain/heic v0.7.2
+	github.com/gen2brain/webp v0.6.4
 	github.com/tkrajina/gpxgo v1.5.1
 	golang.org/x/image v0.46.0
 )

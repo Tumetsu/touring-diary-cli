@@ -201,7 +201,7 @@ func TestConfigPathsRelativeToConfigFile(t *testing.T) {
 	}
 }
 
-func TestNoVideoKeepsVideoOutputs(t *testing.T) {
+func TestNoVideoRemovesVideoOutputs(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
@@ -219,17 +219,54 @@ func TestNoVideoKeepsVideoOutputs(t *testing.T) {
 		}
 	}
 	opts.NoVideo = true
-	buildTrip(t, opts)
-	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(out, "media", f)); err != nil {
-			t.Errorf("--no-video removed %s: %v", f, err)
+	sum, trip, _ := buildTrip(t, opts)
+	for _, it := range trip.Items {
+		if it.Kind == "video" {
+			t.Errorf("--no-video left a video item: %+v", it)
 		}
 	}
-	// Turning videos back on hits the cache.
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(out, "media", f)); !os.IsNotExist(err) {
+			t.Errorf("--no-video kept %s: %v", f, err)
+		}
+	}
+	if sum.MediaConversion.VideoOutputsRemoved != len(files) {
+		t.Errorf("removed count %+v", sum.MediaConversion)
+	}
+	if sum.Size.Videos != 0 || sum.Size.Posters != 0 || sum.Size.Unused != 0 {
+		t.Errorf("size report %+v", sum.Size)
+	}
+	var sb strings.Builder
+	sum.Print(&sb)
+	if !strings.Contains(sb.String(), "removed 3 video outputs (--no-video)") {
+		t.Errorf("summary lacks the removal line:\n%s", sb.String())
+	}
+	cache, err := os.ReadFile(filepath.Join(out, convert.CacheFile))
+	if err != nil || strings.Contains(string(cache), "clip.mov") {
+		t.Errorf("cache entry of clip.mov kept: %v", err)
+	}
+	// Turning videos back on converts the clip again.
 	opts.NoVideo = false
+	sum, _, _ = buildTrip(t, opts)
+	if sum.MediaConversion.Converted != 1 {
+		t.Errorf("rebuild after --no-video: %+v", sum.MediaConversion)
+	}
+}
+
+func TestMissingFFprobeKeepsVideoOutputs(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	out := filepath.Join(t.TempDir(), "dist")
+	opts := Options{MediaDir: filepath.Join(td, "media"), OutDir: out, PhotoSize: 40, ThumbSize: 16}
+	buildTrip(t, opts)
+	opts.FFprobe = ToolOff
 	sum, _, _ := buildTrip(t, opts)
-	if sum.MediaConversion.Converted != 0 {
-		t.Errorf("rebuild after --no-video converted again: %+v", sum.MediaConversion)
+	if _, err := os.Stat(filepath.Join(out, "media", convert.ID("clip.mov")+".mp4")); err != nil || sum.MediaConversion.VideoOutputsRemoved != 0 {
+		t.Errorf("missing ffprobe removed video outputs: %v %+v", err, sum.MediaConversion)
 	}
 }
 
@@ -306,5 +343,24 @@ func TestConfigUnknownDayWarns(t *testing.T) {
 	}
 	if strings.Contains(logs, `"2026-06-27" matches no day`) || trip.Days[0].Title != "ok" {
 		t.Errorf("days %+v logs:\n%s", trip.Days, logs)
+	}
+}
+
+func TestWebPresetBuild(t *testing.T) {
+	sum, trip, _ := buildTrip(t, Options{MediaDir: filepath.Join(td, "media"), Preset: "web", ThumbSize: 16})
+	photos := 0
+	for _, it := range trip.Items {
+		switch it.Kind {
+		case "video":
+			t.Errorf("web preset left a video item: %+v", it)
+		case "photo":
+			photos++
+			if !strings.HasSuffix(it.Src, ".webp") || !strings.HasSuffix(it.Thumb, "_thumb.webp") {
+				t.Errorf("photo paths %s %s", it.Src, it.Thumb)
+			}
+		}
+	}
+	if photos == 0 || sum.Size.Photos == 0 || sum.Size.Thumbs == 0 || sum.Size.Videos != 0 || sum.Format != "webp" {
+		t.Errorf("photos %d, summary %+v", photos, sum)
 	}
 }

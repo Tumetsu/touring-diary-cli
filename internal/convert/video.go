@@ -107,7 +107,7 @@ func posterAt(durationS float64) float64 {
 }
 
 // extractPoster grabs one upright frame as PNG and writes it resized to the
-// photo size as a JPEG (dst) and to the thumb size (thumb).
+// photo size (dst) and to the thumb size (thumb), in p's format.
 func extractPoster(ffmpeg, src, dst, thumb string, durationS float64, hdr, canToneMap bool, p Params) error {
 	in, err := fileURL(src)
 	if err != nil {

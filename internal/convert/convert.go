@@ -42,11 +42,38 @@ func ID(rel string) string {
 // Params are the conversion settings.
 type Params struct {
 	PhotoSize, ThumbSize int
+	// Format is the output image format of photos, thumbnails and posters
+	// (FormatJPEG or FormatWebP); empty means DefaultFormat.
+	Format string
+	// PhotoQuality (photos and posters) and ThumbQuality are encoder
+	// qualities 1-100; zero means the defaults.
+	PhotoQuality, ThumbQuality int
 	// FFmpeg is the ffmpeg executable; empty means unavailable, in which case
 	// videos are copied unchanged.
 	FFmpeg string
 	// LivePhotos converts the motion video paired with a photo.
 	LivePhotos bool
+}
+
+func (p Params) format() string {
+	if p.Format == "" {
+		return DefaultFormat
+	}
+	return p.Format
+}
+
+func (p Params) photoQuality() int {
+	if p.PhotoQuality <= 0 {
+		return DefaultPhotoQuality
+	}
+	return p.PhotoQuality
+}
+
+func (p Params) thumbQuality() int {
+	if p.ThumbQuality <= 0 {
+		return DefaultThumbQuality
+	}
+	return p.ThumbQuality
 }
 
 // Output is what conversion produced for one media file. Paths are
@@ -66,6 +93,9 @@ type Output struct {
 // Stats counts conversion work.
 type Stats struct {
 	Converted, Cached, Copied, Failed int
+	// VideoOutputsRemoved counts output files of videos deleted because of
+	// Converter.DropVideos.
+	VideoOutputsRemoved int
 }
 
 // Converter converts media into <OutDir>/media.
@@ -83,6 +113,11 @@ type Converter struct {
 	// (--no-video, no ffprobe, --live-photos off, a skip override, a failed
 	// conversion). The files passed to Run are always included.
 	Sources []string
+	// DropVideos (--no-video) removes the outputs and cache entries of
+	// video sources that are not converted in this run, so no unused video
+	// is published. Transient conditions (no ffprobe, a failed conversion,
+	// a skip override) never do this.
+	DropVideos bool
 }
 
 // task is one unit of conversion work, cached independently.
@@ -202,7 +237,12 @@ func (c *Converter) Run(files []media.File) ([]Output, Stats, error) {
 	// protected are the output ids of every known source; converted those
 	// converted in this run, which keep exactly their current outputs.
 	protected, converted := map[string]bool{}, map[string]bool{}
+	dropped := map[string]bool{}
 	for _, rel := range c.Sources {
+		if c.DropVideos && media.IsVideo(rel) {
+			dropped[ID(rel)] = true
+			continue
+		}
 		protected[ID(rel)] = true
 	}
 	for _, f := range files {
@@ -258,7 +298,13 @@ func (c *Converter) Run(files []media.File) ([]Output, Stats, error) {
 	if err := cache.save(c.OutDir); err != nil {
 		return outs, st, err
 	}
-	if n := pruneOutputs(dir, keep, retain); n > 0 {
+	removed := pruneOutputs(dir, keep, retain)
+	for _, id := range removed {
+		if dropped[id] && !protected[id] {
+			st.VideoOutputsRemoved++
+		}
+	}
+	if n := len(removed) - st.VideoOutputsRemoved; n > 0 {
 		lg.Printf("media: removed %d stale output files", n)
 	}
 	return outs, st, nil
@@ -281,8 +327,9 @@ func (c *Converter) runTask(t task, params string, canToneMap bool) taskResult {
 	ent := cacheEntry{Size: f.Size, ModTime: f.ModTime.UnixNano(), Params: params}
 	switch t.kind {
 	case "photo":
-		pRel, pAbs := out(".jpg")
-		tRel, tAbs := out("_thumb.jpg")
+		ext := ImageExt(c.Params.format())
+		pRel, pAbs := out(ext)
+		tRel, tAbs := out("_thumb" + ext)
 		res, err := convertImage(f.Path, f.Format, f.Orientation, pAbs, tAbs, c.Params)
 		if err != nil {
 			return taskResult{err: err}
@@ -305,8 +352,9 @@ func (c *Converter) runTask(t task, params string, canToneMap bool) taskResult {
 		}
 		ent.Outputs = []string{rel}
 		if t.kind == "video" {
-			pRel, pAbs := out("_poster.jpg")
-			tRel, tAbs := out("_thumb.jpg")
+			ext := ImageExt(c.Params.format())
+			pRel, pAbs := out("_poster" + ext)
+			tRel, tAbs := out("_thumb" + ext)
 			if err := extractPoster(c.Params.FFmpeg, f.Path, pAbs, tAbs, f.DurationS, f.HDR, canToneMap, c.Params); err != nil {
 				return taskResult{err: fmt.Errorf("poster: %w", err)}
 			}
@@ -318,23 +366,33 @@ func (c *Converter) runTask(t task, params string, canToneMap bool) taskResult {
 
 // paramsHash identifies the settings that affect a task's outputs.
 func (c *Converter) paramsHash(t task, canToneMap bool) string {
+	p := c.Params
 	var s string
 	switch {
 	case t.kind == "photo":
 		s = fmt.Sprintf("photo v%d size=%d q=%d thumb=%d q=%d", pipelineVersion,
-			c.Params.PhotoSize, PhotoQuality, c.Params.ThumbSize, ThumbQuality)
+			p.PhotoSize, p.photoQuality(), p.ThumbSize, p.thumbQuality()) + formatTag(p)
 	case c.Params.FFmpeg == "":
 		s = fmt.Sprintf("%s v%d copy", t.kind, pipelineVersion)
 	default:
 		s = fmt.Sprintf("%s v%d %s", t.kind, pipelineVersion,
 			strings.Join(transcodeArgs("SRC", "DST", t.file.HDR, canToneMap), " "))
 		if t.kind == "video" {
-			s += fmt.Sprintf(" poster size=%d q=%d at=%g thumb=%d q=%d", c.Params.PhotoSize, PhotoQuality,
-				posterAt(t.file.DurationS), c.Params.ThumbSize, ThumbQuality)
+			s += fmt.Sprintf(" poster size=%d q=%d at=%g thumb=%d q=%d", p.PhotoSize, p.photoQuality(),
+				posterAt(t.file.DurationS), p.ThumbSize, p.thumbQuality()) + formatTag(p)
 		}
 	}
 	sum := sha1.Sum([]byte(s))
 	return hex.EncodeToString(sum[:8])
+}
+
+// formatTag is the output format's part of a params hash. JPEG adds
+// nothing, so caches written before the format option stay valid.
+func formatTag(p Params) string {
+	if f := p.format(); f != FormatJPEG {
+		return " format=" + f
+	}
+	return ""
 }
 
 func hasVideo(files []media.File, live bool) bool {
@@ -350,20 +408,20 @@ var outputNameRe = regexp.MustCompile(`^[0-9a-f]{10}(_thumb|_poster)?\.[a-z0-9]+
 
 // pruneOutputs removes files in dir that look like conversion outputs but
 // are neither in keep (paths relative to the out dir) nor belong to an id
-// for which retain is true. Returns the count.
-func pruneOutputs(dir string, keep map[string]bool, retain func(id string) bool) int {
+// for which retain is true. It returns the output id of each removed file.
+func pruneOutputs(dir string, keep map[string]bool, retain func(id string) bool) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0
+		return nil
 	}
-	n := 0
+	var removed []string
 	for _, e := range entries {
 		if e.IsDir() || !outputNameRe.MatchString(e.Name()) || keep[MediaDir+"/"+e.Name()] || retain(e.Name()[:10]) {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, e.Name())) == nil {
-			n++
+			removed = append(removed, e.Name()[:10])
 		}
 	}
-	return n
+	return removed
 }

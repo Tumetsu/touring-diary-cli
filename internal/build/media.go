@@ -176,14 +176,18 @@ func (b *builder) convertMedia(recs []mediaRec) ([]mediaRec, error) {
 		OutDir:  b.opts.OutDir,
 		Sources: b.mediaRels,
 		Params: convert.Params{
-			PhotoSize:  b.opts.PhotoSize,
-			ThumbSize:  b.opts.ThumbSize,
-			FFmpeg:     tool(b.opts.FFmpeg, "ffmpeg"),
-			LivePhotos: b.opts.LivePhotos,
+			PhotoSize:    b.opts.PhotoSize,
+			ThumbSize:    b.opts.ThumbSize,
+			Format:       b.opts.Format,
+			PhotoQuality: b.opts.PhotoQuality,
+			ThumbQuality: b.opts.ThumbQuality,
+			FFmpeg:       tool(b.opts.FFmpeg, "ffmpeg"),
+			LivePhotos:   b.opts.LivePhotos,
 		},
-		Force:   b.opts.Force,
-		Verbose: b.opts.Verbose,
-		Log:     b.log,
+		DropVideos: b.opts.NoVideo,
+		Force:      b.opts.Force,
+		Verbose:    b.opts.Verbose,
+		Log:        b.log,
 	}
 	start := time.Now()
 	outs, st, err := c.Run(files)

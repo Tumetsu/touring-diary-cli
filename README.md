@@ -3,8 +3,8 @@
 A command-line tool that turns the GPX tracks, timestamped notes and photos/videos
 from a trip into a static website: a map with the routes, and with every note and
 photo pinned where it happened, next to a timeline for going through the trip day
-by day. The output is plain HTML, CSS, JavaScript and JPEG/MP4 files that any
-static host can serve.
+by day. The output is plain HTML, CSS, JavaScript and JPEG (or WebP) and MP4 files
+that any static host can serve.
 
 ![Screenshot](docs/screenshot.png) <!-- placeholder: add a screenshot -->
 
@@ -99,7 +99,7 @@ The folder is scanned recursively for `.heic`, `.heif`, `.jpg`, `.jpeg`, `.png`,
   `livePhoto` in `trip.json`. The site does not play it yet.
 
 Published files carry no metadata: GPS and camera EXIF are not copied into the
-output JPEGs and MP4s.
+output images and MP4s.
 
 ## Usage
 
@@ -114,8 +114,12 @@ or `make demo` and `make serve`. The site must be opened through a web server:
 from `file://` the browser refuses to load `trip.json`.
 
 A build prints warnings for skipped files and ends with a summary: tracks, notes and
-media counted by how each was placed, conversion counts, and every skipped file
-with the reason. It exits with 0 even when files were skipped, and with non-zero
+media counted by how each was placed, conversion counts, the image settings, every
+skipped file with the reason, and the size of the output folder: the total, by
+category (photos, thumbnails, videos, posters, `trip.json` + site assets) and the
+largest file (1 MB = 1,000,000 bytes; `.cache.json` is not counted). With
+`--max-output-mb N` it also warns when the total is over N MB; the build still
+succeeds. It exits with 0 even when files were skipped, and with non-zero
 only when an input folder cannot be read or the output cannot be written.
 
 `touring-diary` with no arguments prints the commands and main flags.
@@ -136,8 +140,13 @@ only when an input folder cannot be read or the output cannot be written.
 | `--max-gap DURATION` | `12h` | how far in time an item may be from the nearest position fix and still be placed |
 | `--photo-size PX` | `1600` | long edge of converted photos and video posters |
 | `--thumb-size PX` | `320` | long edge of thumbnails |
+| `--format jpeg\|webp` | `jpeg` | image format of photos, thumbnails and video posters |
+| `--photo-quality N` | `85` | encoder quality (1–100) of photos and video posters |
+| `--thumb-quality N` | `80` | encoder quality (1–100) of thumbnails |
+| `--preset web` | none | defaults for a small site; see [Publishing](#publishing) |
+| `--max-output-mb N` | none | warn when the output folder is larger than N MB |
 | `--live-photos` | off | convert and attach Live Photo videos |
-| `--no-video` | off | skip videos entirely |
+| `--no-video` | off | skip videos entirely, and delete video outputs of earlier builds from the output folder |
 | `--force` | off | ignore the conversion cache and convert all media again |
 | `--verbose` | off | log every media file and extra detail |
 
@@ -161,6 +170,11 @@ given on the command line wins over the file.
   "maxGap": "12h",
   "photoSize": 1600,
   "thumbSize": 320,
+  "format": "jpeg",
+  "photoQuality": 85,
+  "thumbQuality": 80,
+  "preset": "",
+  "maxOutputMb": 0,
   "livePhotos": false,
   "noVideo": false,
   "days": {
@@ -216,9 +230,10 @@ The details are in [SPEC.md section 4.3](SPEC.md#43-placement-of-an-item-without
 
 Converting HEIC photos and transcoding videos is slow, so results are cached in
 `<out>/.cache.json`. A file is converted again only when its size or modification
-time changes, or the conversion settings do (`--photo-size`, `--thumb-size`, the
-ffmpeg arguments, whether ffmpeg and its tone-mapping filters are available). A rebuild with nothing changed
-takes about a second. Outputs of media that no longer exist are deleted.
+time changes, or the conversion settings do (`--photo-size`, `--thumb-size`,
+`--format`, `--photo-quality`, `--thumb-quality`, the ffmpeg arguments, whether ffmpeg and its tone-mapping filters are available). A rebuild with nothing changed
+takes about a second. Outputs of media that no longer exist are deleted, and so are
+video outputs with `--no-video`.
 
 Use `--force` when the cache cannot notice a change: for example after upgrading
 ffmpeg (same arguments, different encoder), or after replacing a file with one of
@@ -238,21 +253,112 @@ dist/
   .cache.json                      conversion cache (need not be published)
 ```
 
+With `--format webp` the images end in `.webp` instead of `.jpg`.
 `<id>` is derived from the source file's path inside the media folder, so output
 names stay stable between builds. The format of `trip.json` is described in
 [SPEC.md section 5.1](SPEC.md#51-tripjson).
 
-## Deployment
+## Publishing
 
-Copy the output folder to any static host (GitHub Pages, Netlify, an S3 bucket, a
-web server directory). `.cache.json` does not need to be uploaded. The site works
-from a subdirectory; all paths are relative.
+The output folder is a complete static site. Copy it to any static host (GitHub
+Pages, Netlify, an S3 bucket, a web server directory); `.cache.json` does not need
+to be uploaded. The site uses only relative URLs, so it works from a subdirectory
+such as `https://you.github.io/repo-name/`.
+
+### Size
+
+Photos and videos make up nearly all of the output. For a trip like the sample one
+(about 200 iPhone photos and 10 short videos over ten days) a default build is about
+240 MB: 93 MB of 1600 px JPEG photos, 137 MB of video, and 7 MB of thumbnails,
+posters and the site itself. Video is the expensive part, a few MB per 10 seconds.
+Every build ends with the size report, so check it before publishing.
+
+### The `web` preset
+
+`--preset web` sets defaults for a site that is quick to load and fits comfortably
+on free static hosts:
+
+| Setting | `web` preset | default |
+|---|---|---|
+| `--format` | `webp` | `jpeg` |
+| `--photo-size` | `1400` | `1600` |
+| `--photo-quality` | `80` | `85` |
+| `--thumb-quality` | `75` | `80` |
+| `--no-video` | on | off |
+
+For the sample trip it gives about 56 MB (52 MB photos, 3 MB thumbnails). Any of
+these settings given on the command line or in the config file wins over the preset,
+e.g. `--preset web --no-video=false` keeps the videos.
+
+WebP is supported by every current browser. At the same size and quality setting it
+is about 15 % smaller than JPEG for these photos (80 MB instead of 93 MB) and
+measures slightly closer to the original; the rest of the saving comes from the
+smaller size and lower quality settings.
+
+`--no-video` (and so the preset) deletes video outputs of earlier builds from the
+output folder, so no unused MP4 gets published; a later build with videos in the same
+folder transcodes them again. Building the published site into its own folder, as
+below, keeps your preview folder's videos. Other outputs that are kept for the cache
+but not used (for example after a failed conversion) are listed in the size report
+as "unused media"; they are small, but need not be uploaded.
+
+### GitHub Pages, step by step
+
+Build the site locally. The source data (GPX, notes, photos, videos) never needs to
+be in git; only the built `site/` folder is published.
+
+```sh
+touring-diary build --config trip.json --preset web --out site
+touring-diary serve site          # check it at http://127.0.0.1:8090/
+```
+
+GitHub limits a Pages repository to about 1 GB and rejects single files over
+100 MB; the size report shows the total and the largest file.
+
+**Option A: a separate repository for the site.** Simplest when the trip data is
+not in git at all.
+
+1. Create an empty repository on GitHub, e.g. `lapland-2026`.
+2. Publish the folder:
+   ```sh
+   cd site
+   git init -b main
+   printf '.cache.json\n' > .gitignore
+   git add . && git commit -m "Publish trip"
+   git remote add origin git@github.com:you/lapland-2026.git
+   git push -u origin main
+   ```
+3. On GitHub: Settings → Pages → Build and deployment → Source "Deploy from a
+   branch", branch `main`, folder `/ (root)`. The site appears at
+   `https://you.github.io/lapland-2026/` after a minute or two.
+4. To update: rebuild into `site/`, then `git add -A && git commit -m Update && git push`
+   inside `site/`.
+
+**Option B: a `gh-pages` branch of an existing repository**, for example the one
+holding your config file.
+
+- With `git subtree`, when `site/` is committed on the main branch:
+  ```sh
+  git add site && git commit -m "Build site"
+  git subtree push --prefix site origin gh-pages
+  ```
+- By copying, which keeps `site/` out of the main branch (add it to `.gitignore`):
+  ```sh
+  git worktree add ../pages gh-pages 2>/dev/null || git worktree add --orphan -b gh-pages ../pages
+  rsync -a --delete --exclude .git --exclude .cache.json site/ ../pages/
+  cd ../pages && git add -A && git commit -m "Publish trip" && git push origin gh-pages
+  ```
+
+Then choose Settings → Pages → branch `gh-pages`, folder `/ (root)`.
+
+### Map tiles and privacy
 
 Map tiles are loaded from the public OpenStreetMap and OpenTopoMap servers. They
 are free but not unlimited: for a site with more than light personal traffic, read
 the [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/)
 and consider a commercial or self-hosted tile provider. Photos and notes are public
-to anyone with the link, and positions show where you slept.
+to anyone with the link, and positions show where you slept. A GitHub Pages site is
+public even when its repository is private (except on paid Enterprise plans).
 
 ## Development
 

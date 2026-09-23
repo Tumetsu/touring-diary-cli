@@ -11,19 +11,25 @@ import (
 // Config is the optional trip config file (spec section 2.5). Every field
 // mirrors a CLI flag; the CLI wins when both are set.
 type Config struct {
-	Title      string               `json:"title"`
-	Timezone   string               `json:"timezone"`
-	MaxGap     Duration             `json:"maxGap"`
-	GPX        string               `json:"gpx"`
-	Notes      string               `json:"notes"`
-	Media      string               `json:"media"`
-	Out        string               `json:"out"`
-	Overrides  string               `json:"overrides"`
-	PhotoSize  int                  `json:"photoSize"`
-	ThumbSize  int                  `json:"thumbSize"`
-	LivePhotos bool                 `json:"livePhotos"`
-	NoVideo    bool                 `json:"noVideo"`
-	Days       map[string]DayConfig `json:"days"`
+	Title      string   `json:"title"`
+	Timezone   string   `json:"timezone"`
+	MaxGap     Duration `json:"maxGap"`
+	GPX        string   `json:"gpx"`
+	Notes      string   `json:"notes"`
+	Media      string   `json:"media"`
+	Out        string   `json:"out"`
+	Overrides  string   `json:"overrides"`
+	PhotoSize  int      `json:"photoSize"`
+	ThumbSize  int      `json:"thumbSize"`
+	LivePhotos bool     `json:"livePhotos"`
+	// NoVideo is a pointer so that an explicit false wins over a preset.
+	NoVideo      *bool                `json:"noVideo"`
+	Format       string               `json:"format"`
+	PhotoQuality int                  `json:"photoQuality"`
+	ThumbQuality int                  `json:"thumbQuality"`
+	Preset       string               `json:"preset"`
+	MaxOutputMB  float64              `json:"maxOutputMb"`
+	Days         map[string]DayConfig `json:"days"`
 	// Map settings are read by the frontend milestone; kept here so config
 	// files validate.
 	Map json.RawMessage `json:"map"`

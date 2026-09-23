@@ -13,15 +13,41 @@ import (
 	"runtime"
 
 	"github.com/gen2brain/heic"
+	gwebp "github.com/gen2brain/webp"
 	"golang.org/x/image/draw"
 	"golang.org/x/image/webp"
 )
 
-// JPEG qualities (spec 4.5).
+// Default encoder qualities (1-100) for photos and posters, and thumbnails
+// (spec 4.5). They apply to JPEG and WebP alike.
 const (
-	PhotoQuality = 85
-	ThumbQuality = 80
+	DefaultPhotoQuality = 85
+	DefaultThumbQuality = 80
 )
+
+// Output image formats for photos, thumbnails and video posters.
+const (
+	FormatJPEG = "jpeg"
+	FormatWebP = "webp"
+)
+
+// DefaultFormat is the output image format when none is given.
+const DefaultFormat = FormatJPEG
+
+// webpMethod is libwebp's speed/size trade-off (0 fast .. 6 small). 4 is
+// libwebp's own default; the zero value (0) gives noticeably larger files.
+const webpMethod = 4
+
+// ValidFormat reports whether f is a supported output image format.
+func ValidFormat(f string) bool { return f == FormatJPEG || f == FormatWebP }
+
+// ImageExt returns the file extension (with dot) for an output format.
+func ImageExt(format string) string {
+	if format == FormatWebP {
+		return ".webp"
+	}
+	return ".jpg"
+}
 
 // heicSlots caps concurrent HEIC conversions at min(NumCPU, 4): each holds
 // a full-resolution image plus the decoder's own memory (a WASM heap without
@@ -62,7 +88,8 @@ func fitLong(w, h, long int) (int, int) {
 
 // resize scales src so its long edge is at most long, with Catmull-Rom.
 // The result is always a fresh *image.RGBA with origin (0,0). Transparent
-// areas are composited over white since JPEG has no alpha.
+// areas are composited over white (JPEG has no alpha; WebP output is
+// kept opaque the same way).
 func resize(src image.Image, long int) *image.RGBA {
 	b := src.Bounds()
 	w, h := fitLong(b.Dx(), b.Dy(), long)
@@ -124,7 +151,7 @@ type photoResult struct {
 }
 
 // convertImage decodes src, turns it upright, and writes the photo and
-// thumbnail JPEGs. orientation is applied only when applyOrientation is set
+// thumbnail images. orientation is applied only when applyOrientation is set
 // (never for HEIC, whose decoder already applies it).
 func convertImage(src, format string, orientation int, photoPath, thumbPath string, p Params) (photoResult, error) {
 	if format == "heic" {
@@ -146,8 +173,8 @@ func convertImage(src, format string, orientation int, photoPath, thumbPath stri
 }
 
 // writeStill resizes img to the photo size (then the thumb size from that),
-// applies orientation to the small copies, and writes the JPEGs. thumbPath
-// may be empty.
+// applies orientation to the small copies, and writes them in p's format
+// and qualities. thumbPath may be empty.
 func writeStill(img image.Image, orientation int, photoPath, thumbPath string, p Params) (photoResult, error) {
 	b := img.Bounds()
 	res := photoResult{width: b.Dx(), height: b.Dy()}
@@ -156,22 +183,34 @@ func writeStill(img image.Image, orientation int, photoPath, thumbPath string, p
 	}
 	// Resizing before orienting is equivalent and much cheaper.
 	photo := resize(img, p.PhotoSize)
-	if err := writeJPEG(photoPath, orient(photo, orientation), PhotoQuality); err != nil {
+	if err := writeImage(photoPath, orient(photo, orientation), p.format(), p.photoQuality()); err != nil {
 		return res, err
 	}
 	if thumbPath != "" {
 		thumb := resize(photo, p.ThumbSize)
-		if err := writeJPEG(thumbPath, orient(thumb, orientation), ThumbQuality); err != nil {
+		if err := writeImage(thumbPath, orient(thumb, orientation), p.format(), p.thumbQuality()); err != nil {
 			return res, err
 		}
 	}
 	return res, nil
 }
 
-// writeJPEG encodes img to path atomically. No metadata is written.
-func writeJPEG(path string, img image.Image, quality int) error {
+// encodeImage encodes img as format ("jpeg" or "webp") at quality 1-100.
+// No metadata is written.
+func encodeImage(w io.Writer, img image.Image, format string, quality int) error {
+	switch format {
+	case FormatJPEG:
+		return jpeg.Encode(w, img, &jpeg.Options{Quality: quality})
+	case FormatWebP:
+		return gwebp.Encode(w, img, gwebp.Options{Quality: quality, Method: webpMethod})
+	}
+	return fmt.Errorf("unsupported output format %q", format)
+}
+
+// writeImage encodes img to path atomically.
+func writeImage(path string, img image.Image, format string, quality int) error {
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+	if err := encodeImage(&buf, img, format, quality); err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
 	return writeFileAtomic(path, buf.Bytes())

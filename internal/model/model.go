@@ -145,13 +145,13 @@ type Item struct {
 	Lon         *float64  `json:"lon"`
 	Placement   Placement `json:"placement"`
 
-	// Src is the web-ready file: media/<id>.jpg for photos, media/<id>.mp4
+	// Src is the web-ready file: media/<id>.jpg (or .webp) for photos, media/<id>.mp4
 	// for videos (or the copied original when ffmpeg is unavailable).
 	Src string `json:"src,omitempty"`
-	// Thumb is the thumbnail, media/<id>_thumb.jpg: of the photo, or of the
+	// Thumb is the thumbnail, media/<id>_thumb.jpg (or .webp): of the photo, or of the
 	// video poster (omitted when videos were copied without ffmpeg).
 	Thumb string `json:"thumb,omitempty"`
-	// Poster is the video poster frame, media/<id>_poster.jpg; omitted when
+	// Poster is the video poster frame, media/<id>_poster.jpg (or .webp); omitted when
 	// videos were copied without ffmpeg.
 	Poster string `json:"poster,omitempty"`
 	// Width/Height are the upright source dimensions (display dimensions for

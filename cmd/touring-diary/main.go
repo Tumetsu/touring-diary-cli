@@ -40,6 +40,7 @@ main build flags:
   --title TEXT                          trip title
   --tz ZONE                             trip timezone, e.g. Europe/Helsinki
   --config FILE, --overrides FILE       trip config and per-item overrides (JSON)
+  --preset web                          smaller output for static hosting
   --force                               ignore the conversion cache
 
 run "touring-diary build -h" for all flags with their defaults.
@@ -80,7 +81,20 @@ var buildDefaults = map[string]string{
 	"config": "none", "overrides": "none",
 	"max-gap":    strings.TrimSuffix(strings.TrimSuffix(placement.DefaultMaxGap.String(), "0s"), "0m"),
 	"photo-size": strconv.Itoa(convert.DefaultPhotoSize), "thumb-size": strconv.Itoa(convert.DefaultThumbSize),
+	"format":        convert.DefaultFormat,
+	"photo-quality": strconv.Itoa(convert.DefaultPhotoQuality), "thumb-quality": strconv.Itoa(convert.DefaultThumbQuality),
+	"preset": "none", "max-output-mb": "none",
 }
+
+// presetHelp documents the presets in "build -h".
+const presetHelp = `
+presets:
+  --preset web   for static hosts such as GitHub Pages: sets
+                 --format webp --photo-size 1400 --photo-quality 80
+                 --thumb-quality 75 --no-video
+                 Each of these given on the command line or in the config
+                 file wins over the preset.
+`
 
 func runBuild(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
@@ -100,6 +114,11 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	fs.DurationVar(&o.MaxGap, "max-gap", 0, "max time distance to a position anchor for placement")
 	fs.IntVar(&o.PhotoSize, "photo-size", 0, "long edge of converted photos and video posters in px")
 	fs.IntVar(&o.ThumbSize, "thumb-size", 0, "long edge of thumbnails in px")
+	fs.StringVar(&o.Format, "format", "", "image format of photos, thumbnails and video posters: jpeg or webp")
+	fs.IntVar(&o.PhotoQuality, "photo-quality", 0, "encoder quality of photos and video posters, 1-100")
+	fs.IntVar(&o.ThumbQuality, "thumb-quality", 0, "encoder quality of thumbnails, 1-100")
+	fs.StringVar(&o.Preset, "preset", "", "preset of defaults: web (see below)")
+	fs.Float64Var(&o.MaxOutputMB, "max-output-mb", 0, "warn when the output folder is larger than this many MB")
 	fs.BoolVar(&o.LivePhotos, "live-photos", false, "convert and attach Live Photo motion videos")
 	fs.BoolVar(&o.NoVideo, "no-video", false, "skip videos entirely")
 	fs.BoolVar(&o.Force, "force", false, "ignore the conversion cache and rebuild all media")
@@ -108,6 +127,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		w := fs.Output()
 		fmt.Fprint(w, "usage: touring-diary build --out DIR [--gpx DIR] [--notes DIR] [--media DIR] [flags]\n\nflags:\n")
 		printFlags(w, fs, buildDefaults)
+		fmt.Fprint(w, presetHelp)
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -119,6 +139,11 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "build: unexpected arguments %v\n", fs.Args())
 		return 2
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "no-video" {
+			o.NoVideoSet = true
+		}
+	})
 	o.Log = log.New(stderr, "", 0)
 	sum, err := build.Run(o)
 	if err != nil {
