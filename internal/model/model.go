@@ -26,9 +26,12 @@ type Trip struct {
 	Timezone    string    `json:"timezone"`
 	GeneratedAt time.Time `json:"generatedAt"`
 	Bounds      *Bounds   `json:"bounds"`
-	Days        []Day     `json:"days"`
-	Tracks      []Track   `json:"tracks"`
-	Items       []Item    `json:"items"`
+	// FitBounds is the initial map view: Bounds without the days marked
+	// excludeFromFit in the config. Equals Bounds when no day remains.
+	FitBounds *Bounds `json:"fitBounds"`
+	Days      []Day   `json:"days"`
+	Tracks    []Track `json:"tracks"`
+	Items     []Item  `json:"items"`
 }
 
 // Bounds is a lat/lon bounding box, encoded as [[minLat, minLon], [maxLat, maxLon]].
@@ -57,11 +60,13 @@ func (b Bounds) MarshalJSON() ([]byte, error) {
 
 // Day is one calendar date in the trip timezone.
 type Day struct {
-	Date    string   `json:"date"`
-	Index   int      `json:"index"`
-	Title   string   `json:"title"`
-	Stats   DayStats `json:"stats"`
-	ItemIDs []string `json:"itemIds"`
+	Date  string `json:"date"`
+	Index int    `json:"index"`
+	Title string `json:"title"`
+	// ExcludeFromFit marks a day left out of the trip's FitBounds.
+	ExcludeFromFit bool     `json:"excludeFromFit,omitempty"`
+	Stats          DayStats `json:"stats"`
+	ItemIDs        []string `json:"itemIds"`
 }
 
 // DayStats sums the stats of the tracks that start on a day.

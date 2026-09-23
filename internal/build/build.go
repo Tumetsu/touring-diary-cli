@@ -248,11 +248,12 @@ func (b *builder) run() (*Summary, error) {
 		Title:       b.opts.Title,
 		Timezone:    b.zone.Name,
 		GeneratedAt: b.opts.Now().UTC().Truncate(time.Second),
-		Bounds:      bounds(gres.Tracks, items),
+		Bounds:      bounds(gres.Tracks, items, nil),
 		Days:        days,
 		Tracks:      tracks,
 		Items:       items,
 	}
+	trip.FitBounds = b.fitBounds(gres.Tracks, items, days, trip.Bounds)
 	if trip.Tracks == nil {
 		trip.Tracks = []model.Track{}
 	}
@@ -567,16 +568,50 @@ func (b *builder) groupDays(items []model.Item, tracks []model.Track) []model.Da
 	}
 	for i := range days {
 		days[i].Stats.DistanceKm = model.Round(days[i].Stats.DistanceKm, 2)
-		if dc, ok := b.cfg.Days[days[i].Date]; ok && dc.Title != "" {
+		dc := b.cfg.Days[days[i].Date]
+		if dc.Title != "" {
 			days[i].Title = dc.Title
 		} else {
 			days[i].Title = strings.Join(names[i], " · ")
 		}
+		days[i].ExcludeFromFit = dc.ExcludeFromFit
+	}
+	dates := make([]string, 0, len(b.cfg.Days))
+	for date := range b.cfg.Days {
+		if _, ok := index[date]; !ok {
+			dates = append(dates, date)
+		}
+	}
+	sort.Strings(dates)
+	for _, date := range dates {
+		b.log.Printf("warning: config day %q matches no day of the trip", date)
 	}
 	return days
 }
 
-func bounds(tracks []gpx.Track, items []model.Item) *model.Bounds {
+// fitBounds is the initial map view: the bounds of the tracks and placed
+// items of the days not marked excludeFromFit. It is all when every day is
+// excluded or there are no days.
+func (b *builder) fitBounds(tracks []gpx.Track, items []model.Item, days []model.Day, all *model.Bounds) *model.Bounds {
+	excluded := map[string]bool{}
+	for _, d := range days {
+		if d.ExcludeFromFit {
+			excluded[d.Date] = true
+		}
+	}
+	if len(excluded) == 0 || len(excluded) == len(days) {
+		return all
+	}
+	skip := func(t time.Time) bool { return excluded[b.zone.DateKey(t)] }
+	if fb := bounds(tracks, items, skip); fb != nil {
+		return fb
+	}
+	return all
+}
+
+// bounds is the box around all track points and placed items, leaving out
+// tracks that start and items that fall on a time skip reports (nil: none).
+func bounds(tracks []gpx.Track, items []model.Item, skip func(time.Time) bool) *model.Bounds {
 	var bb *model.Bounds
 	add := func(lat, lon float64) {
 		if bb == nil {
@@ -586,6 +621,9 @@ func bounds(tracks []gpx.Track, items []model.Item) *model.Bounds {
 		}
 	}
 	for _, t := range tracks {
+		if start, _, ok := t.TimeSpan(); ok && skip != nil && skip(start) {
+			continue
+		}
 		for _, seg := range t.Segments {
 			for _, p := range seg {
 				add(p.Lat, p.Lon)
@@ -593,7 +631,7 @@ func bounds(tracks []gpx.Track, items []model.Item) *model.Bounds {
 		}
 	}
 	for _, it := range items {
-		if it.Lat != nil {
+		if it.Lat != nil && (skip == nil || !skip(it.Time)) {
 			add(*it.Lat, *it.Lon)
 		}
 	}

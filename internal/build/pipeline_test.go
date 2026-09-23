@@ -232,3 +232,79 @@ func TestNoVideoKeepsVideoOutputs(t *testing.T) {
 		t.Errorf("rebuild after --no-video converted again: %+v", sum.MediaConversion)
 	}
 }
+
+func TestConfigExcludeFromFit(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "cfg.json")
+	writeTestFile(t, cfg, `{"days": {"2026-06-26": {"title": "Train", "excludeFromFit": true}, "2026-06-27": {"excludeFromFit": false}}}`)
+	c, err := LoadConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := c.Days["2026-06-26"]; !d.ExcludeFromFit || d.Title != "Train" || c.Days["2026-06-27"].ExcludeFromFit {
+		t.Errorf("days %+v", c.Days)
+	}
+}
+
+func TestFitBounds(t *testing.T) {
+	dir := t.TempDir()
+	notes := filepath.Join(dir, "notes")
+	writeTestFile(t, filepath.Join(notes, "log.json"), `[
+		{"timestamp": "2026-06-26T10:00:00+03:00", "text": "south", "lat": 61.5, "lon": 23.8},
+		{"timestamp": "2026-06-27T10:00:00+03:00", "text": "a", "lat": 66.7, "lon": 27.4},
+		{"timestamp": "2026-06-28T10:00:00+03:00", "text": "b", "lat": 66.9, "lon": 28.9}]`)
+	all := `[[61.5,23.8],[66.9,28.9]]`
+	for _, tc := range []struct {
+		name, days, want string
+		excluded         []string
+	}{
+		{"none excluded", `{}`, all, nil},
+		{"one excluded", `{"2026-06-26": {"excludeFromFit": true}}`, `[[66.7,27.4],[66.9,28.9]]`, []string{"2026-06-26"}},
+		{"all excluded", `{"2026-06-26": {"excludeFromFit": true}, "2026-06-27": {"excludeFromFit": true}, "2026-06-28": {"excludeFromFit": true}}`,
+			all, []string{"2026-06-26", "2026-06-27", "2026-06-28"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := filepath.Join(t.TempDir(), "cfg.json")
+			writeTestFile(t, cfg, `{"days": `+tc.days+`}`)
+			opts := Options{NotesDir: notes, ConfigPath: cfg, OutDir: filepath.Join(t.TempDir(), "dist")}
+			_, trip, _ := buildTrip(t, opts)
+			raw, err := os.ReadFile(filepath.Join(opts.OutDir, "trip.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct{ Bounds, FitBounds json.RawMessage }
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if string(got.Bounds) != all || string(got.FitBounds) != tc.want {
+				t.Errorf("bounds %s fitBounds %s, want %s", got.Bounds, got.FitBounds, tc.want)
+			}
+			var excluded []string
+			for _, d := range trip.Days {
+				if d.ExcludeFromFit {
+					excluded = append(excluded, d.Date)
+				}
+			}
+			if strings.Join(excluded, " ") != strings.Join(tc.excluded, " ") {
+				t.Errorf("excluded days %v, want %v", excluded, tc.excluded)
+			}
+			if tc.excluded == nil && strings.Contains(string(raw), "excludeFromFit") {
+				t.Error("excludeFromFit written for a day that is not excluded")
+			}
+		})
+	}
+}
+
+func TestConfigUnknownDayWarns(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "notes", "log.json"), `[{"timestamp": "2026-06-27T10:00:00+03:00", "text": "a"}]`)
+	cfg := filepath.Join(dir, "cfg.json")
+	writeTestFile(t, cfg, `{"days": {"2026-06-27": {"title": "ok"}, "2026-07-01": {"excludeFromFit": true}}}`)
+	_, trip, logs := buildTrip(t, Options{NotesDir: filepath.Join(dir, "notes"), ConfigPath: cfg})
+	if !strings.Contains(logs, `warning: config day "2026-07-01" matches no day of the trip`) {
+		t.Errorf("no warning:\n%s", logs)
+	}
+	if strings.Contains(logs, `"2026-06-27" matches no day`) || trip.Days[0].Title != "ok" {
+		t.Errorf("days %+v logs:\n%s", trip.Days, logs)
+	}
+}

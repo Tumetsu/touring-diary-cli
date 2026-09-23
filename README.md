@@ -158,13 +158,16 @@ given on the command line wins over the file.
   "livePhotos": false,
   "noVideo": false,
   "days": {
+    "2026-06-26": { "excludeFromFit": true },
     "2026-06-27": { "title": "Kemijärvi → Salla" }
   }
 }
 ```
 
 `days` sets day titles, keyed by date in the trip timezone. Days without a title
-get their tracks' names joined with " · ". Relative paths in the config file
+get their tracks' names joined with " · ". `excludeFromFit: true` leaves a day (say,
+the train ride to the start) out of the map's initial view and the "All" view; the
+day is still drawn and listed, and selecting it zooms to it. Relative paths in the config file
 (`gpx`, `notes`, `media`, `out`, `overrides`) are resolved from the folder the
 config file is in; paths given as flags are resolved from the directory you run
 the command in.

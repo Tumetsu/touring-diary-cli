@@ -96,12 +96,18 @@ the odd wrong GPS fix.
 {
   "title": "Lapland 2026",
   "timezone": "Europe/Helsinki",
-  "days": { "2026-06-27": { "title": "Kemijärvi → Salla" } },
+  "days": {
+    "2026-06-26": { "title": "Train to Kemijärvi", "excludeFromFit": true },
+    "2026-06-27": { "title": "Kemijärvi → Salla" }
+  },
   "map": { "tiles": "osm" }
 }
 ```
 
-Every CLI flag has a config equivalent; CLI wins.
+Every CLI flag has a config equivalent; CLI wins. `excludeFromFit: true` leaves a
+day out of the map's initial view (`fitBounds` in 5.1), e.g. a travel day far from
+the route; the day is otherwise shown as usual. A config date that matches no day
+is warned about.
 
 ## 3. CLI
 
@@ -247,12 +253,14 @@ dist/
   "title": "Lapland 2026",
   "timezone": "Europe/Helsinki",
   "generatedAt": "2026-09-23T15:00:00Z",
-  "bounds": [[65.0, 25.4], [66.8, 29.4]],
+  "bounds": [[65.0, 25.4], [66.8, 29.4]],      // everything on the map
+  "fitBounds": [[65.0, 25.4], [66.8, 29.4]],   // initial view: without excludeFromFit days; = bounds if none remain
   "days": [
     {
       "date": "2026-06-27",
       "index": 1,
       "title": "Kemijärvi → Salla",            // config, else joined track names
+      // "excludeFromFit": true,               // from config; omitted when false
       "stats": { "distanceKm": 91.7, "elevationGainM": 640, "movingTimeS": 18240, "trackIds": ["t1", "t2"] },
       "itemIds": ["n3f9a0c12de", "mab12cd34ef", "m51e0b77a09", "..."]    // chronological
     }

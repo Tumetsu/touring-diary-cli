@@ -384,8 +384,10 @@ function clusterIcon(cluster) {
   });
 }
 
+// fitTrip shows the initial view: fitBounds leaves out the days marked
+// excludeFromFit in the config (bounds for older trip.json files).
 function fitTrip() {
-  const b = state.trip.bounds;
+  const b = state.trip.fitBounds || state.trip.bounds;
   if (b) map.fitBounds(b, fitOptions());
   else map.setView([62, 25], 5);
 }

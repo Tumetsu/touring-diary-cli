@@ -32,6 +32,8 @@ type Config struct {
 // DayConfig holds per-day settings keyed by date ("2026-06-27").
 type DayConfig struct {
 	Title string `json:"title"`
+	// ExcludeFromFit leaves the day out of the map's initial fit (fitBounds).
+	ExcludeFromFit bool `json:"excludeFromFit"`
 }
 
 // Duration is a time.Duration that decodes from a Go duration string ("12h").
