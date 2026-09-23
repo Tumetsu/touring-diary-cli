@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 )
 
 const td = "../../testdata"
+
+var noteIDRe = regexp.MustCompile(`^n[0-9a-f]{10}$`)
 
 func runFixture(t *testing.T, opts Options) (*Summary, map[string]any) {
 	t.Helper()
@@ -65,19 +68,22 @@ func TestBuildFixture(t *testing.T) {
 	}
 
 	items := trip["items"].([]any)
-	type row struct{ id, time, source, title string }
+	type row struct{ time, source, title string }
 	var got []row
 	for _, it := range items {
 		m := it.(map[string]any)
 		title, _ := m["title"].(string)
-		got = append(got, row{m["id"].(string), m["time"].(string), m["placement"].(map[string]any)["source"].(string), title})
+		if id := m["id"].(string); !noteIDRe.MatchString(id) {
+			t.Errorf("note id %q", id)
+		}
+		got = append(got, row{m["time"].(string), m["placement"].(map[string]any)["source"].(string), title})
 	}
 	want := []row{
-		{"n1", "2026-06-27T06:01:00Z", "manual", "Fixed start"},
-		{"n2", "2026-06-27T12:00:00Z", "gps", "Viewpoint"},
-		{"n3", "2026-06-27T20:50:00Z", "snapped", ""},
-		{"n4", "2026-06-27T21:30:00Z", "manual", "Late"},
-		{"n5", "2026-06-28T06:10:00Z", "snapped", ""},
+		{"2026-06-27T06:01:00Z", "manual", "Fixed start"},
+		{"2026-06-27T12:00:00Z", "gps", "Viewpoint"},
+		{"2026-06-27T20:50:00Z", "snapped", ""},
+		{"2026-06-27T21:30:00Z", "manual", "Late"},
+		{"2026-06-28T06:10:00Z", "snapped", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("items = %+v", got)

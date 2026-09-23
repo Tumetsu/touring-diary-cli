@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tuomassalmi/touring-diary/internal/convert"
 	"github.com/tuomassalmi/touring-diary/internal/model"
 )
 
@@ -60,18 +61,18 @@ func TestBuildWithMedia(t *testing.T) {
 	media := map[string]model.Item{}
 	var order []string
 	for _, it := range trip.Items {
-		order = append(order, it.ID)
+		order = append(order, it.ID[:1])
 		if it.Kind != model.KindNote {
 			media[it.Original] = it
 		}
 	}
-	// Chronological, notes (waypoint n1) and media interleaved.
-	if got := strings.Join(order, " "); got != "m1 m2 m3 n1 m4" {
+	// Chronological, notes (a waypoint) and media interleaved.
+	if got := strings.Join(order, " "); got != "m m m n m" {
 		t.Errorf("order = %s", got)
 	}
 
 	png := media["nometa.png"]
-	if png.ID != "m1" || png.Caption != "Waiting for the train" || !png.Time.Equal(time.Date(2026, 6, 26, 15, 0, 0, 0, time.UTC)) {
+	if png.ID != "m"+convert.ID("nometa.png") || png.Caption != "Waiting for the train" || !png.Time.Equal(time.Date(2026, 6, 26, 15, 0, 0, 0, time.UTC)) {
 		t.Errorf("png %+v", png)
 	}
 	g := media["gps_offset.jpg"]

@@ -2,12 +2,14 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,7 +34,17 @@ func readImage(f *File) error {
 	}
 	if t := ex.OriginalDate(); !t.IsZero() && t.Year() > 1900 {
 		f.Time = t
-		f.Naive = ex.ExifIFD.OffsetTimeOriginal == nil
+		switch {
+		case ex.ExifIFD.OffsetTimeOriginal != nil:
+			f.HasOffset = true
+		case ex.IFD0.OffsetTime != nil:
+			// Some cameras write only OffsetTime (the offset of DateTime);
+			// it is the best offset available. t holds the wall clock in UTC.
+			f.Time = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(),
+				ex.IFD0.OffsetTime)
+		default:
+			f.Naive = true
+		}
 	}
 	lat, lon := ex.GPS.Latitude(), ex.GPS.Longitude()
 	if validPosition(lat, lon) {
@@ -83,11 +95,27 @@ type probeOutput struct {
 	} `json:"streams"`
 }
 
+// probeTimeout bounds one ffprobe run; a variable so tests can shorten it.
+var probeTimeout = 30 * time.Second
+
 func readVideo(f *File, ffprobe string) error {
-	cmd := exec.Command(ffprobe, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", f.Path)
+	abs, err := filepath.Abs(f.Path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	// "file:" and an absolute path keep names like "-x.mov" or "a:b.mov"
+	// from being read as an option or a protocol.
+	cmd := exec.CommandContext(ctx, ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+		"file:"+abs)
+	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("ffprobe timed out after %s", probeTimeout)
+	}
 	if err != nil {
 		return fmt.Errorf("ffprobe failed: %v %s", err, strings.TrimSpace(stderr.String()))
 	}
@@ -104,6 +132,7 @@ func applyProbe(f *File, data []byte) error {
 	if s := tags["com.apple.quicktime.creationdate"]; s != "" {
 		if t, err := parseQuickTimeDate(s); err == nil {
 			f.Time = t
+			f.HasOffset = true
 		}
 	}
 	if f.Time.IsZero() {
@@ -168,8 +197,8 @@ var iso6709Re = regexp.MustCompile(`^([+-])(\d+(?:\.\d*)?)([+-])(\d+(?:\.\d*)?)(
 
 // ParseISO6709 parses an ISO 6709 point such as "+66.7003+027.5555/" or
 // "+65.0078+025.5037+009.489/". Degrees, degrees-minutes (DDMM.MM) and
-// degrees-minutes-seconds (DDMMSS.SS) forms are accepted; altitude is
-// ignored.
+// degrees-minutes-seconds (DDMMSS.SS) forms are accepted, as are decimal
+// degrees without zero padding ("+60.1699+24.9384/"); altitude is ignored.
 func ParseISO6709(s string) (lat, lon float64, err error) {
 	m := iso6709Re.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
@@ -201,13 +230,15 @@ func iso6709Part(sign, num string, degDigits int) (float64, error) {
 		return 0, err
 	}
 	var deg float64
-	switch len(intPart) {
-	case degDigits:
+	switch n := len(intPart); {
+	case n == degDigits, n < degDigits && n < len(num):
+		// Decimal degrees; unpadded forms ("+5.12", "+24.9384") need the
+		// decimal point to tell them apart from DDMM.
 		deg = v
-	case degDigits + 2: // DDMM.MM
+	case n == degDigits+2: // DDMM.MM
 		d := math.Floor(v / 100)
 		deg = d + (v-d*100)/60
-	case degDigits + 4: // DDMMSS.SS
+	case n == degDigits+4: // DDMMSS.SS
 		d := math.Floor(v / 10000)
 		mm := math.Floor((v - d*10000) / 100)
 		deg = d + mm/60 + (v-d*10000-mm*100)/3600

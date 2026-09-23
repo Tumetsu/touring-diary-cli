@@ -135,3 +135,40 @@ func TestDisplayPointsEncoding(t *testing.T) {
 		t.Errorf("walk start = %s", ws)
 	}
 }
+
+func TestParseDropsNonFiniteValues(t *testing.T) {
+	const doc = `<?xml version="1.0"?>
+<gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+ <wpt lat="NaN" lon="25"><name>Bad</name><time>2026-06-27T10:00:00Z</time></wpt>
+ <trk><name>T</name><trkseg>
+  <trkpt lat="60" lon="25"><ele>NaN</ele><time>2026-06-27T10:00:00Z</time>
+   <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>Inf</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+  <trkpt lat="NaN" lon="25"><ele>12</ele><time>2026-06-27T10:01:00Z</time></trkpt>
+  <trkpt lat="60.001" lon="25"><ele>-Inf</ele><time>2026-06-27T10:02:00Z</time></trkpt>
+ </trkseg></trk>
+</gpx>`
+	tracks, wpts, err := Parse(strings.NewReader(doc), "nan.gpx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wpts) != 0 {
+		t.Errorf("waypoint with NaN lat kept: %+v", wpts)
+	}
+	if len(tracks) != 1 || len(tracks[0].Segments[0]) != 2 {
+		t.Fatalf("tracks = %+v", tracks)
+	}
+	for _, p := range tracks[0].Segments[0] {
+		if p.Ele != nil || p.HR != nil {
+			t.Errorf("non-finite ele/hr kept: %+v", p)
+		}
+	}
+	start, _, _ := tracks[0].TimeSpan()
+	pts, _ := Display(tracks[0], start, DisplayTolerance)
+	if _, err := json.Marshal(pts); err != nil {
+		t.Error(err)
+	}
+	if _, err := json.Marshal(Stats(tracks[0])); err != nil {
+		t.Error(err)
+	}
+}

@@ -1,7 +1,7 @@
 package timeutil
 
 import (
-	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,15 +70,9 @@ func TestParseZone(t *testing.T) {
 	if _, err := ParseZone("Mars/Olympus"); err == nil {
 		t.Error("expected error for unknown zone")
 	}
-}
-
-func TestDateRange(t *testing.T) {
-	got, err := DateRange("2026-06-30", "2026-07-02")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"2026-06-30", "2026-07-01", "2026-07-02"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v", got)
+	for _, s := range []string{"Local", "local"} {
+		if _, err := ParseZone(s); err == nil || !strings.Contains(err.Error(), "IANA") {
+			t.Errorf("%s: err %v, want a clear rejection", s, err)
+		}
 	}
 }

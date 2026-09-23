@@ -764,18 +764,43 @@ function selectItem(id, { source = 'timeline' } = {}) {
   setHash(`item=${id}`);
 }
 
-// revealClustered zooms (or spiderfies) until a clustered marker is shown
-// on its own, then highlights it. Returns false when the marker is not in a
-// cluster, so the caller pans as usual.
+// Photos taken metres apart stay clustered up to the maximum zoom; zooming
+// that far loses all context, so reveal stops here and fans the cluster out.
+const REVEAL_ZOOM = 16;
+
+// revealClustered zooms in just far enough for a clustered marker to be
+// shown on its own (at most REVEAL_ZOOM, then spiderfying the cluster) and
+// highlights it. Returns false when the marker is already shown or not
+// clustered, so the caller pans as usual.
 function revealClustered(id) {
   const m = markers.get(id);
   if (!m || !layers.clustered.hasLayer(m)) return false;
   // getVisibleParent is the marker itself when shown, its cluster when
-  // clustered, null when off-screen (zoomToShowLayer then pans to it).
+  // clustered, null when off-screen.
   if (layers.clustered.getVisibleParent(m) === m) return false;
-  layers.clustered.zoomToShowLayer(m, () => {
-    if (state.selectedId === id) setMarkerSelected(id, true);
-  });
+  const show = () => {
+    if (state.selectedId !== id) return;
+    // The cluster layer re-clusters after a zoom with its own animation.
+    if (layers.clustered._inZoomAnimation) {
+      layers.clustered.once('animationend', show);
+      return;
+    }
+    const parent = layers.clustered.getVisibleParent(m);
+    if (parent && parent !== m) parent.spiderfy(); // the 'add' hook highlights
+    else setMarkerSelected(id, true);
+  };
+  // __parent._zoom is the deepest zoom at which the marker is clustered.
+  const deepest = m.__parent?._zoom ?? map.getZoom();
+  const zoom = Math.max(map.getZoom(), Math.min(deepest + 1, REVEAL_ZOOM));
+  const ll = m.getLatLng();
+  if (zoom === map.getZoom() && layers.clustered.getVisibleParent(m)) {
+    show();
+    return true;
+  }
+  // Centre it in the part of the map not covered by the bottom sheet.
+  const center = map.unproject(map.project(ll, zoom).add([0, sheetHeight() / 2]), zoom);
+  map.once('moveend', show);
+  map.setView(center, zoom);
   return true;
 }
 

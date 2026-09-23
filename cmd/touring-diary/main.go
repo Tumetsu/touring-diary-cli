@@ -9,18 +9,40 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/tuomassalmi/touring-diary/internal/build"
+	"github.com/tuomassalmi/touring-diary/internal/convert"
+	"github.com/tuomassalmi/touring-diary/internal/placement"
 	"github.com/tuomassalmi/touring-diary/internal/serve"
 )
 
-const usage = `usage: touring-diary <command> [flags]
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
+const usage = `touring-diary turns GPX tracks, timestamped notes and photos/videos from a
+trip into a static website with a map and a timeline.
+
+usage:
+  touring-diary build --gpx DIR --notes DIR --media DIR --out DIR [flags]
+  touring-diary serve [--addr HOST:PORT] [DIR]
+  touring-diary version
 
 commands:
-  build   build the site from GPX, notes and media folders
-  serve   preview a built site over local HTTP
+  build     build the site from GPX, notes and media folders
+  serve     preview a built site over local HTTP (default dir: dist)
+  version   print the version
 
-run "touring-diary <command> -h" for flags.
+main build flags:
+  --gpx DIR, --notes DIR, --media DIR   input folders (at least one)
+  --out DIR                             output folder (required)
+  --title TEXT                          trip title
+  --tz ZONE                             trip timezone, e.g. Europe/Helsinki
+  --config FILE, --overrides FILE       trip config and per-item overrides (JSON)
+  --force                               ignore the conversion cache
+
+run "touring-diary build -h" for all flags with their defaults.
 `
 
 func main() {
@@ -37,6 +59,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runBuild(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "version", "-version", "--version":
+		fmt.Fprintf(stdout, "touring-diary %s\n", version)
+		return 0
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -46,25 +71,44 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// buildDefaults are the effective defaults shown by "build -h". The flags
+// themselves default to zero values so that a config file can fill them
+// (the CLI wins only when a flag is set).
+var buildDefaults = map[string]string{
+	"gpx": "none", "notes": "none", "media": "none", "out": "none, required",
+	"title": `"` + build.DefaultTitle + `"`, "tz": "most common UTC offset in notes and EXIF",
+	"config": "none", "overrides": "none",
+	"max-gap":    strings.TrimSuffix(strings.TrimSuffix(placement.DefaultMaxGap.String(), "0s"), "0m"),
+	"photo-size": strconv.Itoa(convert.DefaultPhotoSize), "thumb-size": strconv.Itoa(convert.DefaultThumbSize),
+}
+
 func runBuild(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	if wantsHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	var o build.Options
 	fs.StringVar(&o.GPXDir, "gpx", "", "folder of .gpx files")
 	fs.StringVar(&o.NotesDir, "notes", "", "folder of .json note files")
-	fs.StringVar(&o.MediaDir, "media", "", "folder of photos and videos")
+	fs.StringVar(&o.MediaDir, "media", "", "folder of photos and videos (scanned recursively)")
 	fs.StringVar(&o.OutDir, "out", "", "output folder")
 	fs.StringVar(&o.Title, "title", "", "trip title")
-	fs.StringVar(&o.TZ, "tz", "", "trip timezone (IANA name or +HH:MM); default: most common note/EXIF offset")
-	fs.StringVar(&o.ConfigPath, "config", "", "trip config JSON")
-	fs.StringVar(&o.OverridesPath, "overrides", "", "overrides JSON keyed by note timestamp or media filename")
-	fs.DurationVar(&o.MaxGap, "max-gap", 0, "max time distance to a position anchor (default 12h)")
-	fs.IntVar(&o.PhotoSize, "photo-size", 0, "long edge of converted photos and posters in px (default 1600)")
-	fs.IntVar(&o.ThumbSize, "thumb-size", 0, "long edge of thumbnails in px (default 320)")
+	fs.StringVar(&o.TZ, "tz", "", "trip timezone for display and day boundaries (IANA name or +HH:MM)")
+	fs.StringVar(&o.ConfigPath, "config", "", "trip config JSON; CLI flags win over it")
+	fs.StringVar(&o.OverridesPath, "overrides", "", "overrides JSON keyed by media filename or note timestamp")
+	fs.DurationVar(&o.MaxGap, "max-gap", 0, "max time distance to a position anchor for placement")
+	fs.IntVar(&o.PhotoSize, "photo-size", 0, "long edge of converted photos and video posters in px")
+	fs.IntVar(&o.ThumbSize, "thumb-size", 0, "long edge of thumbnails in px")
 	fs.BoolVar(&o.LivePhotos, "live-photos", false, "convert and attach Live Photo motion videos")
 	fs.BoolVar(&o.NoVideo, "no-video", false, "skip videos entirely")
 	fs.BoolVar(&o.Force, "force", false, "ignore the conversion cache and rebuild all media")
-	fs.BoolVar(&o.Verbose, "verbose", false, "verbose logging")
+	fs.BoolVar(&o.Verbose, "verbose", false, "log every media file and placement detail")
+	fs.Usage = func() {
+		w := fs.Output()
+		fmt.Fprint(w, "usage: touring-diary build --out DIR [--gpx DIR] [--notes DIR] [--media DIR] [flags]\n\nflags:\n")
+		printFlags(w, fs, buildDefaults)
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -91,8 +135,16 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 func runServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	if wantsHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	dir := fs.String("dir", "dist", "built site folder to serve (may also be given as an argument)")
 	addr := fs.String("addr", "127.0.0.1:8090", "listen address")
+	fs.Usage = func() {
+		w := fs.Output()
+		fmt.Fprint(w, "usage: touring-diary serve [--addr HOST:PORT] [DIR]\n\nflags:\n")
+		printFlags(w, fs, nil)
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -112,4 +164,37 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// wantsHelp reports whether args ask for help, so it goes to stdout.
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "-h", "-help", "--help", "--h":
+			return true
+		case "--":
+			return false
+		}
+	}
+	return false
+}
+
+// printFlags lists every flag with its default. defaults overrides the
+// flag's own default value where the effective default is computed later.
+func printFlags(w io.Writer, fs *flag.FlagSet, defaults map[string]string) {
+	fs.VisitAll(func(f *flag.Flag) {
+		name, usage := flag.UnquoteUsage(f)
+		head := "  --" + f.Name
+		if name != "" {
+			head += " " + name
+		}
+		def, ok := defaults[f.Name]
+		if !ok {
+			def = f.DefValue
+			if name == "string" {
+				def = strconv.Quote(def)
+			}
+		}
+		fmt.Fprintf(w, "%s\n      %s (default: %s)\n", head, usage, def)
+	})
 }

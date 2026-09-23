@@ -5,6 +5,7 @@ package gpx
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -139,7 +140,12 @@ func Parse(r io.Reader, file string) ([]Track, []Waypoint, error) {
 			}
 			s := make(Segment, 0, len(seg.Points))
 			for _, p := range seg.Points {
-				s = append(s, convertPoint(p))
+				if pt, ok := convertPoint(p); ok {
+					s = append(s, pt)
+				}
+			}
+			if len(s) == 0 {
+				continue
 			}
 			t.Segments = append(t.Segments, s)
 		}
@@ -149,6 +155,9 @@ func Parse(r io.Reader, file string) ([]Track, []Waypoint, error) {
 	}
 	var wpts []Waypoint
 	for _, w := range doc.Waypoints {
+		if !finite(w.Latitude) || !finite(w.Longitude) {
+			continue
+		}
 		wpts = append(wpts, Waypoint{
 			Name:        strings.TrimSpace(w.Name),
 			Description: strings.TrimSpace(w.Description),
@@ -161,25 +170,34 @@ func Parse(r io.Reader, file string) ([]Track, []Waypoint, error) {
 	return tracks, wpts, nil
 }
 
-func convertPoint(p gpxgo.GPXPoint) Point {
+// convertPoint converts one trackpoint. ok is false when lat/lon are not
+// finite; non-finite elevation or heart rate is treated as missing (NaN
+// would make trip.json unencodable).
+func convertPoint(p gpxgo.GPXPoint) (pt Point, ok bool) {
+	if !finite(p.Latitude) || !finite(p.Longitude) {
+		return Point{}, false
+	}
 	out := Point{Lat: p.Latitude, Lon: p.Longitude}
 	if p.Elevation.NotNull() {
-		v := p.Elevation.Value()
-		out.Ele = &v
+		if v := p.Elevation.Value(); finite(v) {
+			out.Ele = &v
+		}
 	}
 	if !p.Timestamp.IsZero() {
 		out.Time = p.Timestamp.UTC()
 	}
 	out.HR = findHR(p.Extensions.Nodes)
-	return out
+	return out, true
 }
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // findHR searches extension nodes for a heart-rate element (<gpxtpx:hr> or
 // any element with local name "hr").
 func findHR(nodes []gpxgo.ExtensionNode) *float64 {
 	for _, n := range nodes {
 		if strings.EqualFold(n.LocalName(), "hr") {
-			if v, err := strconv.ParseFloat(strings.TrimSpace(n.Data), 64); err == nil {
+			if v, err := strconv.ParseFloat(strings.TrimSpace(n.Data), 64); err == nil && finite(v) {
 				return &v
 			}
 		}

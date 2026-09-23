@@ -33,7 +33,7 @@ func TestScanFixtures(t *testing.T) {
 
 	g := files["gps_offset.jpg"]
 	want := time.Date(2026, 6, 27, 7, 39, 15, 0, time.UTC)
-	if !g.Time.Equal(want) || g.Naive {
+	if !g.Time.Equal(want) || g.Naive || !g.HasOffset {
 		t.Errorf("gps_offset time %v naive %v, want %v", g.Time, g.Naive, want)
 	}
 	if _, off := g.Time.Zone(); off != 3*3600 {
@@ -50,7 +50,7 @@ func TestScanFixtures(t *testing.T) {
 	}
 
 	n := files["naive.jpg"]
-	if !n.Naive || n.Time.Hour() != 21 || n.Lat != nil || n.Orientation != 3 {
+	if !n.Naive || n.HasOffset || n.Time.Hour() != 21 || n.Lat != nil || n.Orientation != 3 {
 		t.Errorf("naive.jpg: %+v", n)
 	}
 
@@ -160,13 +160,16 @@ func TestParseISO6709(t *testing.T) {
 		{"+404246.2-0740021.6/", 40 + 42.0/60 + 46.2/3600, -(74 + 21.6/3600)}, // DDMMSS
 		{"+66.7003+027.5555", 66.7003, 27.5555},
 		{"+66.7003+027.5555+120CRSWGS_84/", 66.7003, 27.5555},
+		{"+60.1699+24.9384/", 60.1699, 24.9384}, // unpadded longitude
+		{"+5.12+100.1/", 5.12, 100.1},           // unpadded latitude
+		{"-5.5-7.25/", -5.5, -7.25},
 	} {
 		lat, lon, err := ParseISO6709(tc.in)
 		if err != nil || !approx(lat, tc.lat, 1e-9) || !approx(lon, tc.lon, 1e-9) {
 			t.Errorf("%q = %v,%v,%v; want %v,%v", tc.in, lat, lon, err, tc.lat, tc.lon)
 		}
 	}
-	for _, bad := range []string{"", "66.7,27.5", "+95.0+027.0/", "+66.7003/", "+6.7+027.5/"} {
+	for _, bad := range []string{"", "66.7,27.5", "+95.0+027.0/", "+66.7003/", "+6+027.5/", "+66.7+27/"} {
 		if _, _, err := ParseISO6709(bad); err == nil {
 			t.Errorf("%q: expected error", bad)
 		}
@@ -194,6 +197,9 @@ func TestApplyProbe(t *testing.T) {
 	if _, off := f.Time.Zone(); !f.Time.Equal(time.Date(2026, 6, 27, 7, 39, 15, 0, time.UTC)) || off != 3*3600 {
 		t.Errorf("time %v", f.Time)
 	}
+	if !f.HasOffset {
+		t.Error("creationdate must set HasOffset")
+	}
 	if f.Width != 1080 || f.Height != 1920 || f.Rotation != -90 || !f.HDR {
 		t.Errorf("dims %dx%d rot %d hdr %v", f.Width, f.Height, f.Rotation, f.HDR)
 	}
@@ -208,7 +214,7 @@ func TestApplyProbe(t *testing.T) {
 	if err := applyProbe(&g, []byte(js2)); err != nil {
 		t.Fatal(err)
 	}
-	if !g.Time.Equal(time.Date(2026, 6, 28, 5, 0, 0, 0, time.UTC)) || g.Naive || g.Lat != nil {
+	if !g.Time.Equal(time.Date(2026, 6, 28, 5, 0, 0, 0, time.UTC)) || g.Naive || g.HasOffset || g.Lat != nil {
 		t.Errorf("fallback: %+v", g)
 	}
 	if g.Width != 480 || g.Height != 640 || g.HDR {

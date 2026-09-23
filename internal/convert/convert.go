@@ -77,6 +77,12 @@ type Converter struct {
 	Log     *log.Logger
 	// Workers overrides the worker count (default runtime.NumCPU()).
 	Workers int
+	// Sources are the relative paths of every media file the scan found
+	// (Live Photo videos and skipped files included). Outputs and cache
+	// entries of these are kept even when this run does not convert them
+	// (--no-video, no ffprobe, --live-photos off, a skip override, a failed
+	// conversion). The files passed to Run are always included.
+	Sources []string
 }
 
 // task is one unit of conversion work, cached independently.
@@ -193,6 +199,18 @@ func (c *Converter) Run(files []media.File) ([]Output, Stats, error) {
 	close(ch)
 	wg.Wait()
 
+	// protected are the output ids of every known source; converted those
+	// converted in this run, which keep exactly their current outputs.
+	protected, converted := map[string]bool{}, map[string]bool{}
+	for _, rel := range c.Sources {
+		protected[ID(rel)] = true
+	}
+	for _, f := range files {
+		protected[ID(f.Rel)] = true
+		if f.LivePhoto != nil {
+			protected[ID(f.LivePhoto.Rel)] = true
+		}
+	}
 	keep := map[string]bool{}
 	for i, t := range tasks {
 		r := results[i]
@@ -214,6 +232,7 @@ func (c *Converter) Run(files []media.File) ([]Output, Stats, error) {
 		default:
 			st.Converted++
 		}
+		converted[t.id] = true
 		for _, p := range r.entry.Outputs {
 			keep[p] = true
 		}
@@ -234,11 +253,12 @@ func (c *Converter) Run(files []media.File) ([]Output, Stats, error) {
 			o.LivePhoto = e.Outputs[0]
 		}
 	}
-	cache.prune(keep)
+	retain := func(id string) bool { return protected[id] && !converted[id] }
+	cache.prune(keep, retain)
 	if err := cache.save(c.OutDir); err != nil {
 		return outs, st, err
 	}
-	if n := pruneOutputs(dir, keep); n > 0 {
+	if n := pruneOutputs(dir, keep, retain); n > 0 {
 		lg.Printf("media: removed %d stale output files", n)
 	}
 	return outs, st, nil
@@ -280,7 +300,7 @@ func (c *Converter) runTask(t task, params string, canToneMap bool) taskResult {
 			return taskResult{entry: ent, copied: true}
 		}
 		rel, abs := out(".mp4")
-		if err := transcode(c.Params.FFmpeg, f.Path, abs, f.HDR, canToneMap); err != nil {
+		if err := transcode(c.Params.FFmpeg, f.Path, abs, f.DurationS, f.HDR, canToneMap); err != nil {
 			return taskResult{err: err}
 		}
 		ent.Outputs = []string{rel}
@@ -329,15 +349,16 @@ func hasVideo(files []media.File, live bool) bool {
 var outputNameRe = regexp.MustCompile(`^[0-9a-f]{10}(_thumb|_poster)?\.[a-z0-9]+(\.tmp)?$`)
 
 // pruneOutputs removes files in dir that look like conversion outputs but
-// are not in keep (paths relative to the out dir). Returns the count.
-func pruneOutputs(dir string, keep map[string]bool) int {
+// are neither in keep (paths relative to the out dir) nor belong to an id
+// for which retain is true. Returns the count.
+func pruneOutputs(dir string, keep map[string]bool, retain func(id string) bool) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
 	n := 0
 	for _, e := range entries {
-		if e.IsDir() || !outputNameRe.MatchString(e.Name()) || keep[MediaDir+"/"+e.Name()] {
+		if e.IsDir() || !outputNameRe.MatchString(e.Name()) || keep[MediaDir+"/"+e.Name()] || retain(e.Name()[:10]) {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, e.Name())) == nil {

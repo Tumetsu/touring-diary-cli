@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -50,11 +51,18 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// LoadConfig reads a trip config file.
+// LoadConfig reads a trip config file. Relative folder and file paths in
+// it are resolved against the config file's directory.
 func LoadConfig(path string) (Config, error) {
 	var c Config
 	if err := readJSON(path, &c); err != nil {
 		return c, fmt.Errorf("load config: %w", err)
+	}
+	base := filepath.Dir(path)
+	for _, p := range []*string{&c.GPX, &c.Notes, &c.Media, &c.Out, &c.Overrides} {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(base, *p)
+		}
 	}
 	return c, nil
 }

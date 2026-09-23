@@ -118,9 +118,10 @@ touring-diary build \
 - `build` is the only subcommand in v1. `touring-diary serve dist/` (a tiny local
   HTTP server for previewing) is a convenience worth adding in the same milestone
   because `file://` breaks `fetch()` of `trip.json`.
-- `--tz`: IANA zone used for display and day boundaries. Default: the most common
-  UTC offset found in notes and EXIF offsets, as a fixed offset. All internal times
-  are UTC.
+- `--tz`: IANA zone used for display and day boundaries (`Local` is rejected: the
+  site must not depend on the build machine). Default: the most common UTC offset
+  found in notes, EXIF `OffsetTimeOriginal` and QuickTime `creationdate` (UTC-only
+  `creation_time` does not count), as a fixed offset. All internal times are UTC.
 - `--max-gap`: how far from the nearest position anchor (in time) an item may still
   be snapped. Default 12 h. Beyond that the item is placed on the timeline only.
 - Exit code 0 with warnings printed for skipped files; non-zero only for unreadable
@@ -146,6 +147,9 @@ ingest media ┘                                                                
   the trip timezone is assumed and the item is flagged `timeAssumed: true`.
 - A "day" is a calendar date in the trip timezone. Day 1 is the first date that has
   any item (in the sample data: 2026-06-26, the travel day before the first track).
+  Only dates with items or tracks become days; `index` counts them without gaps.
+  When the first and last content are more than 60 days apart the build warns and
+  names both ends, since that is usually a stray file or an unset camera clock.
 
 ### 4.2 Anchors
 
@@ -173,11 +177,12 @@ Given an item at time `t`, find the nearest anchors before (`a`) and after (`b`)
 show "position approximate (2 h 15 min from nearest GPS fix)". Items with their own
 metadata position get `source: "gps"`; manual ones get `manual`.
 
-Why this works on the sample data: a note written in the tent at 23:50 snaps to the
-end of that day's track (the camp), the 07:45 morning note snaps to the next day's
-track start (also the camp), and the Oulu photos on 4 July snap to the end of the
-last ride. The 5 July train note in Tampere is more than 12 h from any anchor and
-correctly stays unplaced.
+Why this works on the sample data: a note written in the tent at 23:50 lies between
+the end of that day's track and the start of the next day's track. Both are the same
+camp, under 2 km apart and within 12 h, so the note is interpolated onto the camp.
+The 07:45 morning note lands there the same way. Notes and photos on 4 July in Oulu
+are placed from the Oulu photos' own GPS acting as anchors. The 5 July train notes in
+Tampere are more than 12 h from any anchor and correctly stay unplaced.
 
 Sanity check for items with their own GPS: if the item falls inside a track's time
 span and its GPS position is more than 1 km from the interpolated track position,
@@ -213,7 +218,9 @@ outliers.
   position (`source: "gps"`) but are not used as anchors. `accuracyM` is emitted
   so the UI can flag them.
 - The media scan is recursive. Outputs in `<out>/media` that no longer correspond
-  to a source file are removed on each build.
+  to a source file are removed on each build. Outputs of files that still exist but
+  were not converted in this run (`--no-video`, no `ffprobe`, a `skip` override, a
+  failed conversion) are kept.
 - Cache: the build keeps `dist/.cache.json` mapping source path + size + mtime +
   conversion parameters to output filenames. Unchanged files are skipped. `--force`
   rebuilds everything.
@@ -247,7 +254,7 @@ dist/
       "index": 1,
       "title": "Kemijärvi → Salla",            // config, else joined track names
       "stats": { "distanceKm": 91.7, "elevationGainM": 640, "movingTimeS": 18240, "trackIds": ["t1", "t2"] },
-      "itemIds": ["n1", "m1", "m2", "..."]    // chronological
+      "itemIds": ["n3f9a0c12de", "mab12cd34ef", "m51e0b77a09", "..."]    // chronological
     }
   ],
   "tracks": [
@@ -259,17 +266,23 @@ dist/
     }
   ],
   "items": [
-    { "id": "n1", "kind": "note", "time": "2026-06-27T07:10:00Z", "text": "Lähtö Kemijärven kmarketilta",
+    { "id": "n3f9a0c12de", "kind": "note", "time": "2026-06-27T07:10:00Z", "text": "Lähtö Kemijärven kmarketilta",
       "lat": 66.72, "lon": 27.40, "placement": { "source": "interpolated", "gapSeconds": 0 } },
-    { "id": "m1", "kind": "photo", "time": "...", "src": "media/ab12cd34ef.jpg", "thumb": "media/ab12cd34ef_thumb.jpg",
+    { "id": "mab12cd34ef", "kind": "photo", "time": "...", "src": "media/ab12cd34ef.jpg", "thumb": "media/ab12cd34ef_thumb.jpg",
       "width": 4032, "height": 3024, "lat": 66.78, "lon": 28.80, "accuracyM": 5,
       "placement": { "source": "gps" }, "original": "IMG_1932.JPG" },   // optional fields are omitted, not null
-    { "id": "m2", "kind": "video", "time": "...", "src": "media/....mp4", "poster": "media/...._poster.jpg",
+    { "id": "m51e0b77a09", "kind": "video", "time": "...", "src": "media/....mp4", "poster": "media/...._poster.jpg",
       "thumb": "media/...._thumb.jpg",   // poster at thumb size; both omitted without ffmpeg
       "durationS": 12.4, "lat": null, "lon": null, "placement": { "source": "none", "gapSeconds": 51000 } }
   ]
 }
 ```
+
+Item ids stay the same between builds, so `#item=` links keep working when items
+are added: media ids are `m` + the output id (4.5); note ids are `n` + the first 10
+hex chars of `sha1(source file path relative to its folder + "\n" + timestamp as
+written + "\n" + text)`. Duplicates get `-2`, `-3`, ... in chronological order. The
+frontend treats ids as opaque strings.
 
 Times in `trip.json` are UTC; the frontend formats them in `timezone`. `items` is
 chronological overall, and each day's `itemIds` is a slice of it.

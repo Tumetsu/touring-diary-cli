@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,9 @@ func ParseZone(s string) (Zone, error) {
 			secs = -secs
 		}
 		return FixedZone(secs), nil
+	}
+	if strings.EqualFold(s, "Local") {
+		return Zone{}, fmt.Errorf("%q is the build machine's zone and would make the site depend on where it is built; give an IANA name such as Europe/Helsinki or an offset such as +03:00", s)
 	}
 	loc, err := time.LoadLocation(s)
 	if err != nil {
@@ -79,22 +83,4 @@ func Offset(t time.Time) int {
 // DateKey returns the calendar date of t in zone z, as "2006-01-02".
 func (z Zone) DateKey(t time.Time) string {
 	return t.In(z.Loc).Format(DateLayout)
-}
-
-// DateRange returns every date key from first to last inclusive. Both must
-// be valid date keys with first <= last.
-func DateRange(first, last string) ([]string, error) {
-	a, err := time.Parse(DateLayout, first)
-	if err != nil {
-		return nil, fmt.Errorf("parse date %q: %w", first, err)
-	}
-	b, err := time.Parse(DateLayout, last)
-	if err != nil {
-		return nil, fmt.Errorf("parse date %q: %w", last, err)
-	}
-	var out []string
-	for d := a; !d.After(b); d = d.AddDate(0, 0, 1) {
-		out = append(out, d.Format(DateLayout))
-	}
-	return out, nil
 }

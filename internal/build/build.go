@@ -3,6 +3,8 @@
 package build
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,7 +88,9 @@ type builder struct {
 	overrides map[string]Override
 	// usedOverrides records override keys that matched a note or media file.
 	usedOverrides map[string]bool
-	sum           *Summary
+	// mediaRels are the relative paths of every scanned media file.
+	mediaRels []string
+	sum       *Summary
 }
 
 // noteRec is a note or waypoint being prepared as an item.
@@ -97,6 +101,9 @@ type noteRec struct {
 	lat, lon    *float64
 	source      model.PlacementSource // gps or manual when positioned itself
 	order       int
+	// idKey identifies the note across builds: source file, timestamp as
+	// written and text. Its hash is the item id.
+	idKey string
 }
 
 func newBuilder(opts Options) (*builder, error) {
@@ -146,8 +153,32 @@ func newBuilder(opts Options) (*builder, error) {
 			return nil, err
 		}
 		b.overrides = ov
+		b.validateOverrides()
 	}
 	return b, nil
+}
+
+// validateOverrides drops override positions that are incomplete or out of
+// range, with a warning.
+func (b *builder) validateOverrides() {
+	keys := make([]string, 0, len(b.overrides))
+	for k := range b.overrides {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		ov := b.overrides[k]
+		switch {
+		case (ov.Lat == nil) != (ov.Lon == nil):
+			b.log.Printf("warning: override %q: lat and lon must be given together; ignoring the position", k)
+		case ov.Lat != nil && (math.Abs(*ov.Lat) > 90 || math.Abs(*ov.Lon) > 180):
+			b.log.Printf("warning: override %q: position %v,%v is out of range (lat ±90, lon ±180); ignoring it", k, *ov.Lat, *ov.Lon)
+		default:
+			continue
+		}
+		ov.Lat, ov.Lon = nil, nil
+		b.overrides[k] = ov
+	}
 }
 
 func (b *builder) verbosef(format string, args ...any) {
@@ -211,10 +242,7 @@ func (b *builder) run() (*Summary, error) {
 	b.verbosef("anchors: %d, max gap %s", placer.Len(), b.opts.MaxGap)
 
 	items := mergeItems(b.placeNotes(recs, placer), b.placeMedia(mrecs, placer))
-	days, err := b.groupDays(items, tracks)
-	if err != nil {
-		return nil, err
-	}
+	days := b.groupDays(items, tracks)
 
 	trip := model.Trip{
 		Title:       b.opts.Title,
@@ -280,7 +308,8 @@ func (b *builder) noteRecords(ns []notes.Note, wpts []gpx.Waypoint) []noteRec {
 	used := b.usedOverrides
 	var recs []noteRec
 	for i, n := range ns {
-		r := noteRec{title: n.Title, text: n.Text, lat: n.Lat, lon: n.Lon, order: i}
+		r := noteRec{title: n.Title, text: n.Text, lat: n.Lat, lon: n.Lon, order: i,
+			idKey: relPath(b.opts.NotesDir, n.File) + "\n" + n.Key + "\n" + n.Text}
 		t := n.Time
 		if n.Naive {
 			t = reinterpret(t, b.zone.Loc)
@@ -343,6 +372,7 @@ func (b *builder) noteRecords(ns []notes.Note, wpts []gpx.Waypoint) []noteRec {
 		recs = append(recs, noteRec{
 			time: w.Time, title: w.Name, text: w.Description,
 			lat: &lat, lon: &lon, source: model.SourceGPS, order: len(ns) + i,
+			idKey: relPath(b.opts.GPXDir, w.File) + "\n" + w.Time.Format(time.RFC3339Nano) + "\n" + w.Name + "\n" + w.Description,
 		})
 	}
 	return recs
@@ -409,7 +439,9 @@ func (b *builder) prepareTracks(in []gpx.Track) ([]model.Track, []placement.Anch
 	return out, anchors
 }
 
-// placeNotes positions note records, sorts them chronologically and assigns ids.
+// placeNotes positions note records, sorts them chronologically and assigns
+// ids: "n" + the first 10 hex chars of sha1(idKey), so ids stay stable
+// when notes are added.
 func (b *builder) placeNotes(recs []noteRec, placer *placement.Placer) []model.Item {
 	sort.SliceStable(recs, func(i, j int) bool {
 		if !recs[i].time.Equal(recs[j].time) {
@@ -418,9 +450,11 @@ func (b *builder) placeNotes(recs []noteRec, placer *placement.Placer) []model.I
 		return recs[i].order < recs[j].order
 	})
 	items := make([]model.Item, 0, len(recs))
-	for i, r := range recs {
+	seen := map[string]bool{}
+	for _, r := range recs {
+		sum := sha1.Sum([]byte(r.idKey))
 		it := model.Item{
-			ID: "n" + strconv.Itoa(i+1), Kind: model.KindNote, Time: r.time, TimeAssumed: r.timeAssumed,
+			ID: uniqueID(seen, "n"+hex.EncodeToString(sum[:])[:10]), Kind: model.KindNote, Time: r.time, TimeAssumed: r.timeAssumed,
 			Title: r.title, Text: r.text,
 		}
 		if r.lat != nil {
@@ -447,31 +481,72 @@ func (b *builder) placeNotes(recs []noteRec, placer *placement.Placer) []model.I
 	return items
 }
 
+// uniqueID returns base, or base-2, base-3, ... if base is already in seen,
+// and records the result. Callers assign ids in a deterministic order.
+func uniqueID(seen map[string]bool, base string) string {
+	id := base
+	for n := 2; seen[id]; n++ {
+		id = base + "-" + strconv.Itoa(n)
+	}
+	seen[id] = true
+	return id
+}
+
+// relPath returns file relative to dir, slash-separated; the base name if
+// that fails.
+func relPath(dir, file string) string {
+	if r, err := filepath.Rel(dir, file); err == nil {
+		return filepath.ToSlash(r)
+	}
+	return filepath.Base(file)
+}
+
+// maxSpanDays is the trip length beyond which the build warns about outliers
+// (a stray old note, a camera with an unset clock).
+const maxSpanDays = 60
+
 // groupDays buckets items and tracks into calendar days in the trip zone.
-// Days run contiguously from the first to the last date with content.
-func (b *builder) groupDays(items []model.Item, tracks []model.Track) ([]model.Day, error) {
-	var dates []string
+// Only dates with content get a day; indexes are sequential.
+func (b *builder) groupDays(items []model.Item, tracks []model.Track) []model.Day {
+	type content struct {
+		t    time.Time
+		what string
+	}
+	var all []content
 	for _, it := range items {
-		dates = append(dates, b.zone.DateKey(it.Time))
+		what := "media " + it.Original
+		if it.Kind == model.KindNote {
+			what = fmt.Sprintf("note %q", oneLine(firstNonEmpty(it.Title, it.Text), 40))
+		}
+		all = append(all, content{it.Time, what})
 	}
 	for _, t := range tracks {
 		if t.Start != nil {
-			dates = append(dates, b.zone.DateKey(*t.Start))
+			all = append(all, content{*t.Start, fmt.Sprintf("track %q", t.Name)})
 		}
 	}
-	if len(dates) == 0 {
-		return []model.Day{}, nil
+	if len(all) == 0 {
+		return []model.Day{}
 	}
-	sort.Strings(dates)
-	keys, err := timeutil.DateRange(dates[0], dates[len(dates)-1])
-	if err != nil {
-		return nil, err
+	sort.SliceStable(all, func(i, j int) bool { return all[i].t.Before(all[j].t) })
+	first, last := all[0], all[len(all)-1]
+	if span := last.t.Sub(first.t); span > maxSpanDays*24*time.Hour {
+		median := all[len(all)/2].t
+		days := func(d time.Duration) int { return int(math.Round(d.Hours() / 24)) }
+		b.log.Printf("warning: the trip spans %d days (%s to %s); check the outliers: earliest is %s on %s (%d days before the median date %s), latest is %s on %s (%d days after it). Fix a wrong time with an override or remove the file.",
+			days(span), b.zone.DateKey(first.t), b.zone.DateKey(last.t),
+			first.what, b.zone.DateKey(first.t), days(median.Sub(first.t)), b.zone.DateKey(median),
+			last.what, b.zone.DateKey(last.t), days(last.t.Sub(median)))
 	}
-	days := make([]model.Day, len(keys))
+	var days []model.Day
 	index := map[string]int{}
-	for i, k := range keys {
-		days[i] = model.Day{Date: k, Index: i + 1, ItemIDs: []string{}, Stats: model.DayStats{TrackIDs: []string{}}}
-		index[k] = i
+	for _, c := range all {
+		k := b.zone.DateKey(c.t)
+		if _, ok := index[k]; ok {
+			continue
+		}
+		index[k] = len(days)
+		days = append(days, model.Day{Date: k, Index: len(days) + 1, ItemIDs: []string{}, Stats: model.DayStats{TrackIDs: []string{}}})
 	}
 	for _, it := range items {
 		d := &days[index[b.zone.DateKey(it.Time)]]
@@ -498,7 +573,7 @@ func (b *builder) groupDays(items []model.Item, tracks []model.Track) ([]model.D
 			days[i].Title = strings.Join(names[i], " · ")
 		}
 	}
-	return days, nil
+	return days
 }
 
 func bounds(tracks []gpx.Track, items []model.Item) *model.Bounds {

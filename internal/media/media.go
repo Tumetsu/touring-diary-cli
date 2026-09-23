@@ -56,6 +56,11 @@ type File struct {
 	// as if it were UTC and must be reinterpreted in the trip zone.
 	Time  time.Time
 	Naive bool
+	// HasOffset is true when the time came with an explicit UTC offset from
+	// the device (EXIF OffsetTimeOriginal, QuickTime
+	// com.apple.quicktime.creationdate). Only these vote in timezone
+	// inference: a UTC creation_time says nothing about the local zone.
+	HasOffset bool
 	// Lat/Lon are nil when the file has no position.
 	Lat, Lon *float64
 	// AccuracyM is the reported horizontal accuracy in metres, nil if unknown.
@@ -71,7 +76,7 @@ type File struct {
 	HDR       bool // HLG or PQ transfer; needs tone mapping for SDR output
 
 	// LivePhoto is the paired motion video of a photo (spec 2.3). Its
-	// metadata is not read.
+	// metadata is read only with Options.LivePhotos (for the HDR flag).
 	LivePhoto *File
 }
 
@@ -82,6 +87,9 @@ type Options struct {
 	FFprobe string
 	// NoVideo skips videos (not Live Photo motion files) without probing.
 	NoVideo bool
+	// LivePhotos also probes paired Live Photo videos, so they are
+	// converted with the right settings (HDR tone mapping).
+	LivePhotos bool
 }
 
 // Result is the outcome of scanning a media folder.
@@ -93,6 +101,9 @@ type Result struct {
 	Warnings []string
 	// Scanned counts every media file found, Live Photo videos included.
 	Scanned int
+	// Rels lists the relative path of every media file found, Live Photo
+	// videos and skipped files included.
+	Rels []string
 	// LivePairs counts photos with a paired Live Photo video.
 	LivePairs int
 }
@@ -149,11 +160,14 @@ func Scan(dir string, opts Options) (Result, error) {
 		return res, fmt.Errorf("read media dir: %w", err)
 	}
 	res.Scanned = len(found)
+	for _, f := range found {
+		res.Rels = append(res.Rels, f.Rel)
+	}
 	files, pairs := pairLivePhotos(found)
 	res.LivePairs = pairs
 
 	// Read metadata in parallel; results go back into files by index.
-	type outcome struct{ skip string }
+	type outcome struct{ skip, warn string }
 	outcomes := make([]outcome, len(files))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
@@ -177,6 +191,11 @@ func Scan(dir string, opts Options) (Result, error) {
 			var err error
 			if f.Kind == KindPhoto {
 				err = readImage(f)
+				if lp := f.LivePhoto; err == nil && lp != nil && opts.LivePhotos && opts.FFprobe != "" {
+					if perr := readVideo(lp, opts.FFprobe); perr != nil {
+						outcomes[i].warn = fmt.Sprintf("%s: Live Photo video: %v", lp.Path, perr)
+					}
+				}
 			} else {
 				err = readVideo(f, opts.FFprobe)
 			}
@@ -187,6 +206,9 @@ func Scan(dir string, opts Options) (Result, error) {
 	}
 	wg.Wait()
 	for i, f := range files {
+		if w := outcomes[i].warn; w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
 		if o := outcomes[i]; o.skip != "" {
 			res.Skipped = append(res.Skipped, model.Skipped{Path: f.Path, Reason: o.skip})
 			continue

@@ -65,9 +65,13 @@ func (c *cache) lookup(key string, f media.File, params, outDir string) (cacheEn
 	return e, true
 }
 
-// prune drops entries whose outputs are not all in keep.
-func (c *cache) prune(keep map[string]bool) {
+// prune drops entries whose outputs are not all in keep, except those
+// whose output id retain accepts.
+func (c *cache) prune(keep map[string]bool, retain func(id string) bool) {
 	for k, e := range c.Entries {
+		if retain(ID(k)) {
+			continue
+		}
 		for _, o := range e.Outputs {
 			if !keep[o] {
 				delete(c.Entries, k)

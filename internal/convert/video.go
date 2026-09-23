@@ -2,13 +2,16 @@ package convert
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image/png"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // scaleFilter limits the long edge to 1920 px ("max 1080p") and keeps even
@@ -50,10 +53,45 @@ func transcodeArgs(src, dst string, hdr, canToneMap bool) []string {
 	return args
 }
 
+// Timeouts for one ffmpeg run: transcodes get a base plus a per-second
+// allowance, capped; toolTimeout covers quick queries.
+const (
+	transcodeBase   = 10 * time.Minute
+	transcodePerSec = 20 * time.Second
+	transcodeMax    = 60 * time.Minute
+	toolTimeout     = 30 * time.Second
+)
+
+// ffmpegTimeout returns the time limit for processing a clip of durationS
+// seconds.
+func ffmpegTimeout(durationS float64) time.Duration {
+	d := transcodeBase + time.Duration(durationS*float64(transcodePerSec))
+	return min(max(d, transcodeBase), transcodeMax)
+}
+
+// fileURL turns a path into an absolute "file:" input/output for ffmpeg
+// and ffprobe, so names like "-x.mov" or "a:b.mov" are not read as an
+// option or a protocol.
+func fileURL(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return "file:" + abs, nil
+}
+
 // transcode runs ffmpeg; dst is written atomically.
-func transcode(ffmpeg, src, dst string, hdr, canToneMap bool) error {
+func transcode(ffmpeg, src, dst string, durationS float64, hdr, canToneMap bool) error {
 	tmp := dst + ".tmp"
-	if err := runFFmpeg(ffmpeg, transcodeArgs(src, tmp, hdr, canToneMap), nil); err != nil {
+	in, err := fileURL(src)
+	if err != nil {
+		return err
+	}
+	out, err := fileURL(tmp)
+	if err != nil {
+		return err
+	}
+	if err := runFFmpeg(ffmpeg, transcodeArgs(in, out, hdr, canToneMap), nil, ffmpegTimeout(durationS)); err != nil {
 		os.Remove(tmp)
 		return err
 	}
@@ -71,16 +109,20 @@ func posterAt(durationS float64) float64 {
 // extractPoster grabs one upright frame as PNG and writes it resized to the
 // photo size as a JPEG (dst) and to the thumb size (thumb).
 func extractPoster(ffmpeg, src, dst, thumb string, durationS float64, hdr, canToneMap bool, p Params) error {
+	in, err := fileURL(src)
+	if err != nil {
+		return err
+	}
 	vf := "format=rgb24"
 	if hdr && canToneMap {
 		vf = toneMapFilter + ",format=rgb24"
 	}
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin",
-		"-ss", strconv.FormatFloat(posterAt(durationS), 'f', 3, 64), "-i", src,
+		"-ss", strconv.FormatFloat(posterAt(durationS), 'f', 3, 64), "-i", in,
 		"-map", "0:v:0", "-frames:v", "1", "-vf", vf,
 		"-f", "image2pipe", "-c:v", "png", "-"}
 	var out bytes.Buffer
-	if err := runFFmpeg(ffmpeg, args, &out); err != nil {
+	if err := runFFmpeg(ffmpeg, args, &out, ffmpegTimeout(durationS)); err != nil {
 		return err
 	}
 	if out.Len() == 0 {
@@ -94,12 +136,20 @@ func extractPoster(ffmpeg, src, dst, thumb string, durationS float64, hdr, canTo
 	return err
 }
 
-func runFFmpeg(ffmpeg string, args []string, stdout io.Writer) error {
-	cmd := exec.Command(ffmpeg, args...)
+// runFFmpeg runs ffmpeg with args, killing it after timeout.
+func runFFmpeg(ffmpeg string, args []string, stdout io.Writer, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ffmpeg, args...)
+	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = stdout
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("ffmpeg timed out after %s", timeout)
+	}
+	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if len(msg) > 300 {
 			msg = msg[len(msg)-300:]
@@ -111,7 +161,9 @@ func runFFmpeg(ffmpeg string, args []string, stdout io.Writer) error {
 
 // hasFilter reports whether ffmpeg was built with the named filter.
 func hasFilter(ffmpeg, name string) bool {
-	out, err := exec.Command(ffmpeg, "-hide_banner", "-filters").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-filters").Output()
 	if err != nil {
 		return false
 	}

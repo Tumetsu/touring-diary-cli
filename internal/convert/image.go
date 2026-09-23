@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gen2brain/heic"
 	"golang.org/x/image/draw"
@@ -22,12 +23,21 @@ const (
 	ThumbQuality = 80
 )
 
+// heicSlots caps concurrent HEIC conversions at min(NumCPU, 4): each holds
+// a full-resolution image plus the decoder's own memory (a WASM heap without
+// libheif), so one per CPU can exhaust RAM on many-core machines. Other
+// formats use the full worker pool.
+var heicSlots = make(chan struct{}, min(runtime.NumCPU(), 4))
+
+// decodeHEIC is heic.Decode; a variable so tests can observe concurrency.
+var decodeHEIC = heic.Decode
+
 // decodeImage decodes a source image by format ("heic", "jpeg", "png",
 // "webp"). HEIC pixels come back upright; the others are as stored.
 func decodeImage(r io.Reader, format string) (image.Image, error) {
 	switch format {
 	case "heic":
-		return heic.Decode(r)
+		return decodeHEIC(r)
 	case "jpeg":
 		return jpeg.Decode(r)
 	case "png":
@@ -117,6 +127,10 @@ type photoResult struct {
 // thumbnail JPEGs. orientation is applied only when applyOrientation is set
 // (never for HEIC, whose decoder already applies it).
 func convertImage(src, format string, orientation int, photoPath, thumbPath string, p Params) (photoResult, error) {
+	if format == "heic" {
+		heicSlots <- struct{}{}
+		defer func() { <-heicSlots }()
+	}
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return photoResult{}, err

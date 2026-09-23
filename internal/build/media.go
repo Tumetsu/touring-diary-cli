@@ -3,8 +3,8 @@ package build
 import (
 	"math"
 	"os/exec"
+	"path"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/tuomassalmi/touring-diary/internal/convert"
@@ -53,7 +53,8 @@ func (b *builder) scanMedia() (*media.Result, error) {
 	if ffprobe == "" && !b.opts.NoVideo {
 		b.log.Printf("warning: ffprobe not found; videos will be skipped")
 	}
-	res, err := media.Scan(b.opts.MediaDir, media.Options{FFprobe: ffprobe, NoVideo: b.opts.NoVideo})
+	res, err := media.Scan(b.opts.MediaDir, media.Options{FFprobe: ffprobe, NoVideo: b.opts.NoVideo,
+		LivePhotos: b.opts.LivePhotos})
 	if err != nil {
 		return nil, err
 	}
@@ -63,21 +64,23 @@ func (b *builder) scanMedia() (*media.Result, error) {
 	for _, w := range res.Warnings {
 		b.log.Printf("warning: %s", w)
 	}
+	b.mediaRels = res.Rels
 	b.sum.MediaScanned = res.Scanned
 	b.sum.LivePairs = res.LivePairs
 	b.verbosef("media: %d files scanned, %d Live Photo videos paired", res.Scanned, res.LivePairs)
 	return &res, nil
 }
 
-// mediaOffsets returns the UTC offsets of media times that carry one, for
-// timezone inference.
+// mediaOffsets returns the UTC offsets of media times that carry one from
+// the device, for timezone inference. UTC-only times (QuickTime
+// creation_time) do not count: they say nothing about the local zone.
 func mediaOffsets(res *media.Result) []int {
 	if res == nil {
 		return nil
 	}
 	var out []int
 	for _, f := range res.Files {
-		if !f.Time.IsZero() && !f.Naive {
+		if !f.Time.IsZero() && f.HasOffset {
 			out = append(out, timeutil.Offset(f.Time))
 		}
 	}
@@ -90,6 +93,13 @@ func (b *builder) mediaRecords(res *media.Result) []mediaRec {
 	if res == nil {
 		return nil
 	}
+	// A bare filename key is ambiguous when files in different folders
+	// share the name; such keys apply to nothing (use the relative path).
+	names := map[string]int{}
+	for _, rel := range res.Rels {
+		names[path.Base(rel)]++
+	}
+	ambiguous := map[string]bool{}
 	var recs []mediaRec
 	for _, f := range res.Files {
 		r := mediaRec{file: f, time: f.Time, timeAssumed: f.Naive, lat: f.Lat, lon: f.Lon}
@@ -103,6 +113,15 @@ func (b *builder) mediaRecords(res *media.Result) []mediaRec {
 		if _, ok = b.overrides[key]; !ok {
 			key = f.Name
 			_, ok = b.overrides[key]
+			if ok && names[key] > 1 {
+				ok = false
+				b.usedOverrides[key] = true
+				if !ambiguous[key] {
+					ambiguous[key] = true
+					b.log.Printf("warning: override %q matches %d files in different folders; not applied (key it by the path relative to the media folder, e.g. %q)",
+						key, names[key], f.Rel)
+				}
+			}
 		}
 		if ok {
 			b.usedOverrides[key] = true
@@ -154,7 +173,8 @@ func (b *builder) convertMedia(recs []mediaRec) ([]mediaRec, error) {
 		files[i] = r.file
 	}
 	c := convert.Converter{
-		OutDir: b.opts.OutDir,
+		OutDir:  b.opts.OutDir,
+		Sources: b.mediaRels,
 		Params: convert.Params{
 			PhotoSize:  b.opts.PhotoSize,
 			ThumbSize:  b.opts.ThumbSize,
@@ -203,7 +223,8 @@ func mediaAnchors(recs []mediaRec) []placement.Anchor {
 }
 
 // placeMedia positions media records, sorts them chronologically and
-// assigns ids m1, m2, ...
+// assigns ids "m" + the output id of the source path, which stay stable
+// when other files are added.
 func (b *builder) placeMedia(recs []mediaRec, placer *placement.Placer) []model.Item {
 	sort.SliceStable(recs, func(i, j int) bool {
 		if !recs[i].time.Equal(recs[j].time) {
@@ -212,10 +233,11 @@ func (b *builder) placeMedia(recs []mediaRec, placer *placement.Placer) []model.
 		return recs[i].file.Rel < recs[j].file.Rel
 	})
 	items := make([]model.Item, 0, len(recs))
-	for i, r := range recs {
+	seen := map[string]bool{}
+	for _, r := range recs {
 		f := r.file
 		it := model.Item{
-			ID: "m" + strconv.Itoa(i+1), Kind: string(f.Kind), Time: r.time, TimeAssumed: r.timeAssumed,
+			ID: uniqueID(seen, "m"+convert.ID(f.Rel)), Kind: string(f.Kind), Time: r.time, TimeAssumed: r.timeAssumed,
 			Title: r.title, Caption: r.caption, Original: f.Name,
 			Src: r.out.Src, Thumb: r.out.Thumb, Poster: r.out.Poster,
 			Width: r.out.Width, Height: r.out.Height,

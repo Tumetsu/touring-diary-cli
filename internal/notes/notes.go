@@ -113,7 +113,7 @@ func Parse(r io.Reader, file string) (Result, error) {
 	return res, nil
 }
 
-var offsetLayouts = []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00"}
+var offsetLayouts = []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05.999999999Z0700"}
 var naiveLayouts = []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02 15:04"}
 
 // ParseTimestamp parses an ISO 8601 timestamp. With an offset the result
@@ -121,6 +121,9 @@ var naiveLayouts = []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04",
 // returned in UTC for the caller to reinterpret.
 func ParseTimestamp(s string) (t time.Time, naive bool, err error) {
 	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "z") {
+		s = s[:len(s)-1] + "Z"
+	}
 	for _, l := range offsetLayouts {
 		if t, err := time.Parse(l, s); err == nil {
 			return t, false, nil
