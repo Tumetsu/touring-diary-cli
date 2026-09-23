@@ -1,0 +1,7 @@
+# Keep the data folders in the repo but ignore their contents
+events_log/*
+!events_log/.gitkeep
+gpx/*
+!gpx/.gitkeep
+media/*
+!media/.gitkeep
