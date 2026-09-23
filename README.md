@@ -294,4 +294,6 @@ Packages:
   `tonemap` filters.
 - HEIC decoding without native libheif is slow on the first build (minutes for a
   few hundred photos); later builds use the cache.
+- The elevation profile is desktop only (hidden below 768 px width), and only
+  items taken during a track's time range get a tick on it.
 - The site needs JavaScript and a modern browser (ES modules, `inert`, CSS `:has`).

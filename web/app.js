@@ -40,6 +40,14 @@ const els = {
   lbCount: document.getElementById('lb-count'),
   lbFull: document.getElementById('lb-full'),
   lbMini: document.getElementById('lb-mini'),
+  profile: document.getElementById('profile'),
+  profileBody: document.getElementById('profile-body'),
+  profileSvg: document.getElementById('profile-svg'),
+  profileSummary: document.getElementById('profile-summary'),
+  profileLegend: document.getElementById('profile-legend'),
+  profileToggle: document.getElementById('profile-toggle'),
+  profileReadout: document.getElementById('profile-readout'),
+  profileEmpty: document.getElementById('profile-empty'),
 };
 
 const narrowQuery = window.matchMedia('(max-width: 767px)');
@@ -743,6 +751,7 @@ function selectItem(id, { source = 'timeline' } = {}) {
     state.selectedDay = day;
     updateChips();
     applyDayDimming();
+    updateProfile();
   }
 
   const entry = document.getElementById(`entry-${id}`);
@@ -753,6 +762,7 @@ function selectItem(id, { source = 'timeline' } = {}) {
   map.closePopup();
   setMarkerSelected(id, true);
   showSelectionRing(item);
+  markProfileSelection();
   if (onMap(item)) {
     const ll = L.latLng(item.lat, item.lon);
     if (source === 'hash') {
@@ -812,6 +822,7 @@ function clearItemSelection() {
   setMarkerSelected(state.selectedId, false);
   showSelectionRing(null);
   state.selectedId = null;
+  markProfileSelection();
 }
 
 function dayBounds(day) {
@@ -834,6 +845,7 @@ function selectDay(index, { source = 'chip' } = {}) {
   state.selectedDay = index;
   updateChips();
   applyDayDimming();
+  updateProfile();
   map.closePopup();
   if (index == null) {
     fitTrip();
@@ -1098,6 +1110,490 @@ function initLightbox() {
   els.lbStage.addEventListener('pointercancel', () => { swipe.id = null; });
 }
 
+// ---------------------------------------------------------------- elevation profile
+
+// The profile strip under the map (SPEC.md 6.4): the selected day's tracks,
+// or the whole trip's, end to end along a distance axis. Hidden by CSS on
+// narrow screens; everything here then sees a zero-size panel and draws
+// nothing, so enabling it there later is a CSS change.
+
+const PROFILE_KEY = 'touringDiary.profileCollapsed';
+// Plot margins: room for track names above, elevation labels left, and the
+// item tick strip plus distance labels below.
+const PM = { top: 18, right: 14, bottom: 30, left: 48 };
+const TICK_Y = 3; // item ticks start this far below the plot
+const TICK_LEN = 8;
+const TICK_HIT = 8; // px either side of a tick that still counts as on it
+
+const profile = {
+  cum: new Map(), // track id -> Float64Array of cumulative km per point
+  view: null, // { segs, totalKm, lo, hi, items } for the current day
+  geom: null, // scales of the last render
+  ticks: [], // { entry, x, el } sorted by x
+  hoverTick: null,
+  marker: null,
+  hoverEls: null,
+  timer: 0,
+};
+
+const EARTH_KM = 6371.0088;
+const RAD = Math.PI / 180;
+
+function haversineKm(a, b) {
+  const dLat = (b[0] - a[0]) * RAD;
+  const dLon = (b[1] - a[1]) * RAD;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * RAD) * Math.cos(b[0] * RAD) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+// cumulativeKm returns the distance from the track start at each point. The
+// jump between recorded segments is not counted.
+function cumulativeKm(track) {
+  const pts = track.points;
+  const out = new Float64Array(pts.length);
+  const breaks = new Set(track.segmentStarts || []);
+  for (let i = 1; i < pts.length; i++) {
+    out[i] = out[i - 1] + (breaks.has(i) ? 0 : haversineKm(pts[i - 1], pts[i]));
+  }
+  return out;
+}
+
+// lowerBound returns the first index in the sorted array-like whose value
+// (via get) is >= v.
+function lowerBound(n, get, v) {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (get(mid) < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// nearestIndex returns the index whose value is closest to v.
+function nearestIndex(n, get, v) {
+  const i = lowerBound(n, get, v);
+  if (i <= 0) return 0;
+  if (i >= n) return n - 1;
+  return v - get(i - 1) <= get(i) - v ? i - 1 : i;
+}
+
+// buildProfileView lays out the tracks of the selected day (or the whole
+// trip) end to end in chronological order and places the items on them.
+function buildProfileView() {
+  const day = state.selectedDay ? state.dayByIndex.get(state.selectedDay) : null;
+  const ids = day ? day.stats.trackIds : state.trip.tracks.map((t) => t.id);
+  const tracks = ids.map((id) => state.tracksById.get(id))
+    .filter((t) => t && t.start && t.points?.length > 1)
+    .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  const segs = [];
+  let offset = 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const track of tracks) {
+    const cum = profile.cum.get(track.id);
+    const km = cum[cum.length - 1];
+    for (const p of track.points) {
+      if (p[2] == null) continue;
+      if (p[2] < lo) lo = p[2];
+      if (p[2] > hi) hi = p[2];
+    }
+    segs.push({ track, cum, offset, km, t0: Date.parse(track.start), t1: Date.parse(track.end), cat: trackCategory(track.type) });
+    offset += km;
+  }
+
+  // Items within a track's time range sit at the point nearest in time. When
+  // ranges overlap (a hike during a paused ride), the closer point wins.
+  const items = [];
+  const itemIds = day ? day.itemIds : state.trip.items.map((it) => it.id);
+  for (const id of itemIds) {
+    const item = state.itemsById.get(id);
+    const t = Date.parse(item.time);
+    let best = null;
+    for (const seg of segs) {
+      if (t < seg.t0 || t > seg.t1) continue;
+      const pts = seg.track.points;
+      const s = (t - seg.t0) / 1000;
+      const idx = nearestIndex(pts.length, (i) => pts[i][3], s);
+      const dt = Math.abs(pts[idx][3] - s);
+      if (!best || dt < best.dt) best = { item, seg, idx, dt, km: seg.offset + seg.cum[idx] };
+    }
+    if (best) items.push(best);
+  }
+  items.sort((a, b) => a.km - b.km);
+  return { day, segs, totalKm: offset, lo, hi, items };
+}
+
+// niceScale rounds [lo, hi] out to steps of 1, 2, 2.5 or 5 x 10^n giving
+// about `count` intervals.
+function niceScale(lo, hi, count) {
+  const span = Math.max(hi - lo, 1e-9);
+  const raw = span / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= raw * 0.999);
+  const start = Math.floor(lo / step) * step;
+  const end = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let v = start; v <= end + step / 2; v += step) ticks.push(Math.round(v * 1000) / 1000);
+  return { lo: start, hi: end, step, ticks };
+}
+
+function elevationScale(lo, hi) {
+  // Flat days keep at least 40 m of range, so noise does not look like hills.
+  if (hi - lo < 40) {
+    const mid = (hi + lo) / 2;
+    lo = mid - 20;
+    hi = mid + 20;
+  }
+  // The smallest nice step that needs at most four gridlines.
+  const mag = 10 ** Math.floor(Math.log10((hi - lo) / 3));
+  let s = null;
+  for (const m of [1, 2, 2.5, 5, 10, 20, 25, 50]) {
+    s = niceScale(lo, hi, (hi - lo) / (m * mag));
+    if (s.ticks.length <= 4) break;
+  }
+  // Gridlines sit on multiples of the step, but the domain is rounded to a
+  // fifth of it, so a −46 m dip does not push the floor down to −250 m.
+  const pad = s.step / 5;
+  const domLo = Math.floor(lo / pad) * pad;
+  const domHi = Math.ceil(hi / pad) * pad;
+  const ticks = s.ticks.filter((v) => v >= domLo - 1e-9 && v <= domHi + 1e-9);
+  return { lo: domLo, hi: domHi, step: s.step, ticks };
+}
+
+const r1 = (v) => Math.round(v * 10) / 10;
+
+// segmentPaths draws one track, keeping at most the first, min and max
+// point of each 1 px column (about 2 points per pixel) so peaks survive.
+function segmentPaths(seg, xOf, yOf, bottom) {
+  const pts = seg.track.points;
+  const out = [];
+  const push = (i) => { if (out[out.length - 1] !== i) out.push(i); };
+  let col = null;
+  let iMin = -1;
+  let iMax = -1;
+  let lastEle = pts[0][2] ?? 0;
+  const ele = new Float64Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    lastEle = pts[i][2] ?? lastEle;
+    ele[i] = lastEle;
+  }
+  const flush = () => {
+    if (iMin < 0) return;
+    if (iMin <= iMax) { push(iMin); push(iMax); } else { push(iMax); push(iMin); }
+  };
+  push(0);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const c = Math.floor(xOf(seg.offset + seg.cum[i]));
+    if (c !== col) {
+      flush();
+      col = c;
+      iMin = iMax = i;
+    } else {
+      if (ele[i] < ele[iMin]) iMin = i;
+      if (ele[i] > ele[iMax]) iMax = i;
+    }
+  }
+  flush();
+  push(pts.length - 1);
+  let line = '';
+  for (let k = 0; k < out.length; k++) {
+    const i = out[k];
+    line += `${k ? 'L' : 'M'}${r1(xOf(seg.offset + seg.cum[i]))},${r1(yOf(ele[i]))}`;
+  }
+  const x0 = r1(xOf(seg.offset));
+  const x1 = r1(xOf(seg.offset + seg.km));
+  return { line, area: `${line}L${x1},${bottom}L${x0},${bottom}Z`, points: out.length, ele };
+}
+
+function fitLabel(text, px) {
+  const max = Math.floor(px / 6); // ~6 px per character at 10.5 px
+  if (max < 4) return '';
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+function renderProfileHead(view) {
+  const parts = [];
+  if (view.day) {
+    const s = view.day.stats;
+    parts.push(`Day ${view.day.index}`);
+    if (s.trackIds.length) parts.push(formatKm(s.distanceKm), `↑ ${Math.round(s.elevationGainM).toLocaleString('en-GB')} m`);
+  } else {
+    const km = state.trip.days.reduce((a, d) => a + (d.stats.distanceKm || 0), 0);
+    const gain = state.trip.days.reduce((a, d) => a + (d.stats.elevationGainM || 0), 0);
+    parts.push('Whole trip', `${Math.round(km).toLocaleString('en-GB')} km`, `↑ ${Math.round(gain).toLocaleString('en-GB')} m`);
+  }
+  if (view.segs.length) parts.push(`${Math.round(view.lo)}–${Math.round(view.hi)} m`);
+  els.profileSummary.textContent = parts.join(' · ');
+  // Legend only when both kinds are on screen; one kind is named by the
+  // track labels and the readout.
+  const cats = [...new Set(view.segs.map((s) => s.cat))];
+  const names = { cycling: 'Cycling', hiking: 'Hiking / walking', other: 'Other' };
+  els.profileLegend.replaceChildren(...(cats.length > 1
+    ? ['cycling', 'hiking', 'other'].filter((c) => cats.includes(c)).map((c) => h('span', {}, h('i', { class: c }), names[c]))
+    : []));
+}
+
+function renderProfile() {
+  const view = profile.view;
+  if (!view) return;
+  hideProfileHover();
+  renderProfileHead(view);
+  const W = els.profileBody.clientWidth;
+  const H = els.profileBody.clientHeight;
+  const svg = els.profileSvg;
+  const hasData = view.segs.length && Number.isFinite(view.lo);
+  els.profileEmpty.hidden = !!hasData;
+  els.profileEmpty.textContent = view.segs.length ? 'No elevation data' : 'No tracks recorded';
+  profile.ticks = [];
+  profile.geom = null;
+  if (!hasData || W < 120 || H < 60) {
+    svg.replaceChildren();
+    return;
+  }
+  const t0 = performance.now();
+  const pw = W - PM.left - PM.right;
+  const ph = H - PM.top - PM.bottom;
+  const bottom = PM.top + ph;
+  const ys = elevationScale(view.lo, view.hi);
+  const xOf = (km) => PM.left + (km / view.totalKm) * pw;
+  const yOf = (e) => PM.top + ((ys.hi - e) / (ys.hi - ys.lo)) * ph;
+  const parts = [];
+
+  const baseY = Math.round(yOf(ys.lo)) + 0.5;
+  parts.push(`<line class="p-base" x1="${PM.left}" x2="${W - PM.right}" y1="${baseY}" y2="${baseY}"/>`);
+  for (const v of ys.ticks) {
+    const y = Math.round(yOf(v)) + 0.5;
+    if (y !== baseY) parts.push(`<line class="p-grid" x1="${PM.left}" x2="${W - PM.right}" y1="${y}" y2="${y}"/>`);
+    parts.push(`<text x="${PM.left - 6}" y="${y + 3.5}" text-anchor="end">${v.toLocaleString('en-GB')} m</text>`);
+  }
+  const xs = niceScale(0, view.totalKm, Math.max(2, Math.floor(pw / 90)));
+  for (const v of xs.ticks) {
+    if (v > view.totalKm + 1e-6) break;
+    const x = xOf(v);
+    if (x > W - PM.right - 24 && v !== 0) continue; // leave room for the last label
+    parts.push(`<text x="${r1(x)}" y="${H - 5}" text-anchor="${v === 0 ? 'start' : 'middle'}">${v.toLocaleString('en-GB')} km</text>`);
+  }
+
+  let drawn = 0;
+  for (let i = 0; i < view.segs.length; i++) {
+    const seg = view.segs[i];
+    const p = segmentPaths(seg, xOf, yOf, bottom);
+    seg.ele = p.ele;
+    drawn += p.points;
+    const color = `var(--track-${seg.cat})`;
+    parts.push(`<path class="p-area" d="${p.area}" fill="var(--track-${seg.cat}-wash)"/>`,
+      `<path class="p-line" d="${p.line}" stroke="${color}"/>`);
+  }
+  // Track boundaries and names, drawn over the fills.
+  for (let i = 0; i < view.segs.length; i++) {
+    const seg = view.segs[i];
+    const x = Math.round(xOf(seg.offset)) + 0.5;
+    const next = i + 1 < view.segs.length ? xOf(view.segs[i + 1].offset) : W - PM.right;
+    if (i > 0) parts.push(`<line class="p-divider" x1="${x}" x2="${x}" y1="${PM.top - 14}" y2="${bottom}"/>`);
+    const label = fitLabel(seg.track.name || 'Untitled track', next - x - 8);
+    if (label) parts.push(`<text class="p-track-label" x="${x + (i > 0 ? 4 : 0)}" y="${PM.top - 6}">${escapeHTML(label)}</text>`);
+  }
+  // Item ticks under the plot.
+  const tickTop = bottom + TICK_Y;
+  view.items.forEach((entry, i) => {
+    const x = r1(xOf(entry.km));
+    const cls = isMedia(entry.item) ? 'media' : 'note';
+    parts.push(`<line class="p-tick ${cls}" data-i="${i}" x1="${x}" x2="${x}" y1="${tickTop}" y2="${tickTop + TICK_LEN}"/>`);
+  });
+  parts.push('<g class="p-hover" visibility="hidden">' +
+    `<line class="p-cursor" x1="0" x2="0" y1="${PM.top}" y2="${bottom}"/>` +
+    '<circle class="p-dot" r="4.5" cx="0" cy="0"/></g>');
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = parts.join('');
+  const tickEls = svg.querySelectorAll('.p-tick');
+  profile.ticks = view.items.map((entry, i) => ({ entry, x: xOf(entry.km), el: tickEls[i] }));
+  const g = svg.querySelector('.p-hover');
+  profile.hoverEls = { g, cursor: g.firstElementChild, dot: g.lastElementChild };
+  profile.geom = { W, H, pw, ph, bottom, tickTop, xOf, yOf };
+  markProfileSelection();
+  profile.lastRender = { ms: performance.now() - t0, points: drawn };
+}
+
+// updateProfile rebuilds the profile for the selected day.
+function updateProfile() {
+  if (!state.trip) return;
+  profile.view = buildProfileView();
+  renderProfile();
+}
+
+function markProfileSelection() {
+  for (const t of profile.ticks) t.el.classList.toggle('is-selected', t.entry.item.id === state.selectedId);
+}
+
+function hideProfileHover() {
+  profile.hoverEls?.g.setAttribute('visibility', 'hidden');
+  els.profileReadout.hidden = true;
+  els.profileSvg.classList.remove('is-over-tick');
+  setHoverTick(null);
+  profile.marker?.remove();
+}
+
+function setHoverTick(t) {
+  if (profile.hoverTick === t) return;
+  profile.hoverTick?.el.classList.remove('is-hover');
+  profile.hoverTick = t;
+  t?.el.classList.add('is-hover');
+}
+
+// pointAt returns the track point nearest to plot x.
+function pointAt(x) {
+  const { segs, totalKm } = profile.view;
+  const { xOf, pw } = profile.geom;
+  const km = Math.max(0, Math.min(totalKm, ((x - PM.left) / pw) * totalKm));
+  let si = lowerBound(segs.length, (i) => segs[i].offset, km + 1e-9) - 1;
+  si = Math.max(0, si);
+  const seg = segs[si];
+  const idx = nearestIndex(seg.cum.length, (i) => seg.cum[i], km - seg.offset);
+  return { seg, idx, x: xOf(seg.offset + seg.cum[idx]) };
+}
+
+function nearestTick(x) {
+  const ticks = profile.ticks;
+  if (!ticks.length) return null;
+  const i = nearestIndex(ticks.length, (k) => ticks[k].x, x);
+  return Math.abs(ticks[i].x - x) <= TICK_HIT ? ticks[i] : null;
+}
+
+function readoutName(cls, text) {
+  return h('span', { class: 'r-name' }, h('i', { class: cls }), text);
+}
+
+function showProfileHover(e) {
+  const geom = profile.geom;
+  if (!geom) return;
+  const rect = els.profileSvg.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const tick = y >= geom.bottom - 2 ? nearestTick(x) : null;
+  setHoverTick(tick);
+  els.profileSvg.classList.toggle('is-over-tick', !!tick);
+
+  let seg;
+  let idx;
+  let cx;
+  if (tick) {
+    ({ seg, idx } = tick.entry);
+    cx = tick.x;
+  } else {
+    ({ seg, idx, x: cx } = pointAt(x));
+  }
+  const p = seg.track.points[idx];
+  const ele = seg.ele ? seg.ele[idx] : p[2];
+  const { g, cursor, dot } = profile.hoverEls;
+  const cxr = Math.round(cx) + 0.5;
+  cursor.setAttribute('x1', cxr);
+  cursor.setAttribute('x2', cxr);
+  dot.setAttribute('cx', r1(cx));
+  dot.setAttribute('cy', r1(geom.yOf(ele)));
+  dot.setAttribute('fill', `var(--track-${seg.cat})`);
+  g.setAttribute('visibility', 'visible');
+
+  const ms = seg.t0 + p[3] * 1000;
+  const when = state.selectedDay ? state.fmt.time(ms) : `Day ${state.dayOfItem.get(tick?.entry.item.id) ?? dayOfTrack(seg.track.id)} · ${state.fmt.time(ms)}`;
+  const km = seg.offset + seg.cum[idx];
+  let content;
+  if (tick) {
+    const it = tick.entry.item;
+    const kind = { photo: 'Photo', video: 'Video', note: 'Note' }[it.kind] || it.kind;
+    const text = it.title || it.caption || it.text || '';
+    content = [
+      h('strong', {}, state.fmt.time(it.time)), ' ', h('span', { class: 'r-sub' }, `· ${km.toFixed(1)} km · ${Math.round(ele)} m`),
+      readoutName(isMedia(it) ? 'media' : 'note', kind),
+      text ? h('span', { class: 'r-text' }, text.length > 80 ? `${text.slice(0, 78).trimEnd()}…` : text) : null,
+    ];
+  } else {
+    content = [
+      h('strong', {}, `${Math.round(ele).toLocaleString('en-GB')} m`), ' ',
+      h('span', { class: 'r-sub' }, `· ${km.toFixed(1)} km · ${when}`),
+      readoutName(seg.cat, seg.track.name || 'Untitled track'),
+    ];
+  }
+  const ro = els.profileReadout;
+  ro.replaceChildren(...content.filter(Boolean));
+  ro.hidden = false;
+  const w = ro.offsetWidth;
+  const left = cx + 12 + w <= geom.W - 4 ? cx + 12 : Math.max(4, cx - 12 - w);
+  ro.style.left = `${Math.round(left)}px`;
+
+  // Position marker on the main map; never pans.
+  const ll = [p[0], p[1]];
+  if (!profile.marker) {
+    map.createPane('profileHover');
+    map.getPane('profileHover').style.zIndex = 640; // above markers, below popups
+    map.getPane('profileHover').style.pointerEvents = 'none';
+    profile.marker = L.circleMarker(ll, { pane: 'profileHover', radius: 7, color: '#fff', weight: 3, fillOpacity: 1, interactive: false });
+  }
+  profile.marker.setLatLng(ll);
+  profile.marker.setStyle({ fillColor: trackColor(seg.track.type) });
+  if (!map.hasLayer(profile.marker)) profile.marker.addTo(map);
+}
+
+function dayOfTrack(id) {
+  for (const d of state.trip.days) if (d.stats.trackIds.includes(id)) return d.index;
+  return '?';
+}
+
+function restoreProfileCollapsed() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(PROFILE_KEY) === '1'; } catch { /* storage blocked */ }
+  setProfileCollapsed(collapsed);
+}
+
+function setProfileCollapsed(collapsed) {
+  els.profile.classList.toggle('is-collapsed', collapsed);
+  els.profileToggle.textContent = collapsed ? '▲' : '▼';
+  els.profileToggle.setAttribute('aria-expanded', String(!collapsed));
+  els.profileToggle.setAttribute('aria-label', collapsed ? 'Show elevation profile' : 'Hide elevation profile');
+}
+
+function initProfile(trip) {
+  for (const t of trip.tracks) if (t.points?.length) profile.cum.set(t.id, cumulativeKm(t));
+
+  els.profileToggle.addEventListener('click', () => {
+    const collapsed = !els.profile.classList.contains('is-collapsed');
+    setProfileCollapsed(collapsed);
+    try { localStorage.setItem(PROFILE_KEY, collapsed ? '1' : '0'); } catch { /* storage blocked */ }
+    hideProfileHover();
+    map.invalidateSize();
+  });
+
+  const svg = els.profileSvg;
+  svg.addEventListener('pointermove', showProfileHover);
+  svg.addEventListener('pointerdown', showProfileHover);
+  svg.addEventListener('pointerleave', hideProfileHover);
+  svg.addEventListener('click', (e) => {
+    showProfileHover(e);
+    const t = profile.hoverTick;
+    if (!t) return;
+    const id = t.entry.item.id;
+    selectItem(id, { source: 'profile' });
+    if (isMedia(t.entry.item)) openLightbox(id);
+  });
+
+  // Re-render at the new width; the map also resizes with the strip.
+  let lastW = 0;
+  let lastH = 0;
+  new ResizeObserver(() => {
+    const w = els.profileBody.clientWidth;
+    const hgt = els.profileBody.clientHeight;
+    if (w === lastW && hgt === lastH) return;
+    lastW = w;
+    lastH = hgt;
+    clearTimeout(profile.timer);
+    profile.timer = setTimeout(renderProfile, 100);
+  }).observe(els.profileBody);
+
+  updateProfile();
+}
+
 // ---------------------------------------------------------------- init
 
 function index(trip) {
@@ -1163,6 +1659,7 @@ async function main() {
   index(trip);
   renderSummary(trip);
 
+  restoreProfileCollapsed(); // before the map, so its first fit has the final size
   initMap(trip);
   renderChips(trip);
   renderTimeline(trip);
@@ -1171,11 +1668,12 @@ async function main() {
   initSheet();
   initKeys();
   initLightbox();
+  initProfile(trip);
   applyHash();
   window.addEventListener('hashchange', () => { if (location.hash !== lastHash) applyHash(); });
   window.addEventListener('popstate', onPopState);
   // Handle for debugging from the console.
-  window.touringDiary = { map, state, selectItem, selectDay, openLightbox, closeLightbox };
+  window.touringDiary = { map, state, selectItem, selectDay, openLightbox, closeLightbox, profile };
 }
 
 main();

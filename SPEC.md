@@ -337,8 +337,25 @@ chips.
 
 - Time scrubber that moves a "you are here" dot along the tracks and hides items
   after the chosen moment.
-- Elevation profile per day with hover linked to the map.
 - Live Photo playback on press.
+- Elevation profile on narrow screens (the bottom sheet occupies that space).
+
+### 6.4 Elevation profile
+
+- A strip about 160 px tall docked under the map on desktop, collapsible with a
+  ▲/▼ button; the state is remembered in `localStorage`. Hidden below 768 px.
+- Shows the selected day's tracks end to end in chronological order ("All": the
+  whole trip) against distance in km, computed in the browser with haversine
+  once per track at load. A thin divider and the track name mark each track
+  boundary; line and light fill are coloured by activity type as on the map.
+  Elevation axis with 3-4 gridlines. Inline SVG sized to the panel, re-rendered
+  on resize; drawn with at most the first, min and max point per pixel column.
+- Hovering (or dragging on touch) shows a cursor, a readout (elevation, km,
+  local time, track name) and a position dot on the map at that track point,
+  without panning. Leaving the strip hides them.
+- Photos, videos and notes whose time falls within a track's time range are
+  ticks under the plot, at the point nearest in time. Hovering a tick shows the
+  item; clicking selects it (media open in the lightbox).
 
 ## 7. Technology choices
 

@@ -25,7 +25,22 @@
         <p class="loading">Loading trip…</p>
       </div>
     </aside>
-    <div class="map" id="map" role="region" aria-label="Map"></div>
+    <div class="map-area">
+      <div class="map" id="map" role="region" aria-label="Map"></div>
+      <section class="profile" id="profile" aria-label="Elevation profile">
+        <header class="profile-head">
+          <h2 class="profile-title">Elevation</h2>
+          <p class="profile-summary" id="profile-summary"></p>
+          <p class="profile-legend" id="profile-legend"></p>
+          <button class="profile-toggle" id="profile-toggle" type="button" aria-expanded="true" aria-controls="profile-body" aria-label="Hide elevation profile">▼</button>
+        </header>
+        <div class="profile-body" id="profile-body">
+          <svg class="profile-svg" id="profile-svg" role="img" aria-label="Elevation profile"></svg>
+          <div class="profile-readout" id="profile-readout" hidden></div>
+          <p class="profile-empty" id="profile-empty" hidden>No tracks recorded</p>
+        </div>
+      </section>
+    </div>
   </main>
   <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
     <div class="lb-stage" id="lb-stage"></div>
